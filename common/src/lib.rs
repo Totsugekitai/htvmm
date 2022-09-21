@@ -1,14 +1,26 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+#![no_std]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PhysAddr(u64);
+
+impl PhysAddr {
+    pub fn new(pa: u64) -> Self {
+        Self(pa)
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtAddr(u64);
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl VirtAddr {
+    pub fn new(va: u64) -> Self {
+        Self(va)
     }
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct BootArgs {
+    pub file_size: u64,
+    pub map_paddr: PhysAddr,
 }
