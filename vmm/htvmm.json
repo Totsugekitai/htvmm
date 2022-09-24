@@ -5,7 +5,7 @@
     "linker": "rust-lld",
     "pre-link-args": {
         "ld.lld": [
-            "--script=src/link.ld",
+            "--script=src/htvmm.lds",
             "-Map",
             "htvmm.map"
         ]

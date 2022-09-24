@@ -1,4 +1,12 @@
 #![no_std]
 #![no_main]
 
-fn main() {}
+use core::panic::PanicInfo;
+
+#[no_mangle]
+pub fn vmm_main() {}
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! {
+    loop {}
+}
