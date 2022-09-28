@@ -5,16 +5,8 @@ PHDRS {
 }
 
 SECTIONS {
-    .entry : {
-        KEEP(*(.entry));
-    }
-    .text : {
-        *(.text);
-    }
-    .rodata : {
-        *(.rodata);
-    }
-    .data : {
-        *(.data);
-    }
+    .entry      : { KEEP(*(.entry)); }
+    .text       : { *(.text); }
+    .rodata     : { *(.rodata); }
+    .data       : { *(.data); }
 }

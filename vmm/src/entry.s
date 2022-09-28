@@ -4,9 +4,12 @@
 .global     entry 
 entry: # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
     call    *save_uefi_regs(%rip)
+    call    *create_page_table(%rip)
+    cli
+    lea     pml4e(%rip), %rax
+    mov     %rax, %cr3
     call    *vmm_main(%rip)
     ret
-
 
 .global     save_uefi_regs
 save_uefi_regs:
@@ -41,6 +44,51 @@ save_uefi_regs:
     pop     %rax
     ret
 
+# create 4GiB identity mapping
+.global     create_page_table
+create_page_table:
+    mov     $0x7, %rax                  # user access + writable + present
+    lea     pdpe(%rip), %rbx
+    or      %rax, %rbx
+    mov     %rbx, pml4e(%rip)           # pml4e[0]
+    lea     pde0(%rip), %rbx
+    or      %rax, %rbx
+    mov     %rbx, pdpe(%rip)            # pdpe[0]
+    lea     pde1(%rip), %rbx
+    or      %rax, %rbx
+    mov     %rbx, pdpe(%rip)            # pdpe[1]
+    lea     pde2(%rip), %rbx
+    or      %rax, %rbx
+    mov     %rbx, pdpe(%rip)            # pdpe[2]
+    lea     pde3(%rip), %rbx
+    or      %rax, %rbx
+    mov     %rbx, pdpe(%rip)            # pdpe[3]
+    mov     $0x83, %rbx                 # pagesize=2MiB + writable + present
+    xor     %ecx, %ecx
+0:  mov     %rbx, pde0(,%ecx,8)         # pde0[0] ~ pde0[511]
+    add     $0x200000, %rbx             #
+    add     $1, %ecx                    #
+    cmp     $512, %ecx                  #
+    jb      0b                          #
+    xor     %ecx, %ecx
+1:  mov     %rbx, pde1(,%ecx,8)         # pde1[0] ~ pde1[511]
+    add     $0x200000, %rbx             #
+    add     $1, %ecx                    #
+    cmp     $512, %ecx                  #
+    jb      1b                          #
+    xor     %ecx, %ecx
+2:  mov     %rbx, pde2(,%ecx,8)         # pde2[0] ~ pde2[511]
+    add     $0x200000, %rbx             #
+    add     $1, %ecx                    #
+    cmp     $512, %ecx                  #
+    jb      2b                          #
+    xor     %ecx, %ecx
+3:  mov     %rbx, pde3(,%ecx,8)         # pde3[0] ~ pde3[511]
+    add     $0x200000, %rbx             #
+    add     $1, %ecx                    #
+    cmp     $512, %ecx                  #
+    jb      3b                          #
+    ret
 
 # ===== UEFI special registers store space =====
 .global     uefi_cs
@@ -109,3 +157,35 @@ uefi_msr_ia32_sysenter_eip:
 uefi_msr_ia32_sysenter_eip_high:
     .word   0
 # === UEFI special registers store space end ===
+
+# ===== VMM page table =====
+.align      0x1000
+.global     pml4e
+pml4e:
+    .space  8*512
+
+.align      0x1000
+.global     pdpe
+pdpe:
+    .space  8*512
+
+.align      0x1000
+.global     pde0
+pde0:
+    .space  8*512
+
+.align      0x1000
+.global     pde1
+pde1:
+    .space  8*512
+
+.align      0x1000
+.global     pde2
+pde2:
+    .space  8*512
+
+.align      0x1000
+.global     pde3
+pde3:
+    .space  8*512
+# === VMM page table end ===
