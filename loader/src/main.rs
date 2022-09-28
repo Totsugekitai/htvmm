@@ -7,6 +7,7 @@ extern crate alloc;
 
 use common::{BootArgs, PhysAddr};
 use core::arch::asm;
+use goblin::elf;
 use uefi::{
     data_types::Align,
     prelude::*,
@@ -73,12 +74,19 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         halt("[ERROR] into_regular_file");
     }
     let mut vmm_regular_file = vmm_regular_file.unwrap();
-    let read_res = vmm_regular_file.read(unsafe {
-        core::slice::from_raw_parts_mut(alloc_paddr as *mut u8, file_size as usize)
-    });
+    let region =
+        unsafe { core::slice::from_raw_parts_mut(alloc_paddr as *mut u8, file_size as usize) };
+    let read_res = vmm_regular_file.read(region);
     if read_res.is_err() {
         halt("[ERROR] read");
     }
+
+    let vmm_elf = elf::Elf::parse(&region);
+    if vmm_elf.is_err() {
+        halt("[ERROR] parse ELF");
+    }
+    let vmm_elf = vmm_elf.unwrap();
+    let vmm_entry_offset = vmm_elf.program_headers[0].p_offset; // FIXME!!!
 
     let map_paddr = PhysAddr::new(alloc_paddr);
 
@@ -88,10 +96,11 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     };
 
     let vmm_entry: extern "sysv64" fn(*const BootArgs) =
-        unsafe { core::mem::transmute(alloc_paddr) };
+        unsafe { core::mem::transmute(alloc_paddr + vmm_entry_offset) };
 
-    // enter VMM!!!
-    vmm_entry(&boot_args as *const BootArgs);
+    println!("ENTER VMM");
+    vmm_entry(&boot_args as *const BootArgs); // enter VMM!!!
+    println!("[OK] vmm_entry");
 
     Status::SUCCESS
 }
