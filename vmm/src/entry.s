@@ -4,6 +4,8 @@
 .global     entry 
 entry: # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
     call    *save_uefi_regs(%rip)
+    call    *vmm_main(%rip)
+    ret
 
 
 .global     save_uefi_regs
