@@ -1,2 +1,4 @@
 target/
 *.map
+image/
+tools/
