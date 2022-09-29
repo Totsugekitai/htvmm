@@ -95,10 +95,11 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         map_paddr,
     };
 
+    let entry_point = alloc_paddr + vmm_entry_offset;
     let vmm_entry: extern "sysv64" fn(*const BootArgs) =
-        unsafe { core::mem::transmute(alloc_paddr + vmm_entry_offset) };
+        unsafe { core::mem::transmute(entry_point) };
 
-    println!("ENTER VMM");
+    println!("ENTER VMM: 0x{:x}", entry_point);
     vmm_entry(&boot_args as *const BootArgs); // enter VMM!!!
     println!("[OK] vmm_entry");
 
