@@ -28,14 +28,14 @@ save_uefi_regs:
     str     uefi_tr(%rip)
     mov     %cr3, %rax
     mov     %rax, uefi_cr3(%rip)
-    mov     $0x174, %rcx        # MSR_IA32_SYSENTER_CS
+    mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
     rdmsr
     mov     %ax, uefi_msr_ia32_sysenter_cs(%rip)
-    mov     $0x175, %rcx        # MSR_IA32_SYSENTER_ESP
+    mov     $0x175, %rcx                # MSR_IA32_SYSENTER_ESP
     rdmsr
     mov     %eax, uefi_msr_ia32_sysenter_esp(%rip)
     mov     %edx, uefi_msr_ia32_sysenter_esp_high(%rip)
-    mov     $0x176, %rcx        # MSR_IA32_SYSENTER_EIP
+    mov     $0x176, %rcx                # MSR_IA32_SYSENTER_EIP
     rdmsr
     mov     %eax, uefi_msr_ia32_sysenter_eip(%rip)
     mov     %edx, uefi_msr_ia32_sysenter_eip_high(%rip)
