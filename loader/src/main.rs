@@ -103,6 +103,8 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     vmm_entry(&boot_args as *const BootArgs); // enter VMM!!!
     println!("[OK] vmm_entry");
 
+    loop {}
+
     Status::SUCCESS
 }
 
