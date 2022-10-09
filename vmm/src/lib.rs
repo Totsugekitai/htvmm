@@ -2,19 +2,32 @@
 #![no_main]
 
 use common::{BootArgs, PhysAddr};
-use core::{panic::PanicInfo, ptr};
+use core::{
+    arch::{asm, global_asm},
+    panic::PanicInfo,
+    ptr,
+};
+
+global_asm!(include_str!("entry.s"), options(att_syntax));
 
 #[no_mangle]
-pub fn vmm_main(boot_args: *const BootArgs) {
+pub extern "C" fn vmm_main(boot_args: *const BootArgs) -> ! {
     let boot_args = unsafe { &*boot_args };
     unsafe {
         clear_bss(&boot_args.map_paddr);
+        loop {
+            asm!("hlt");
+        }
     }
 }
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    loop {}
+    loop {
+        unsafe {
+            asm!("hlt");
+        }
+    }
 }
 
 extern "C" {

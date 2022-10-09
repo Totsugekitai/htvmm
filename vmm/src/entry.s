@@ -1,15 +1,33 @@
 .code64
-.section    .entry
+.section    .entry, "awx"
 
-.global     entry 
-entry: # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
-    call    *save_uefi_regs(%rip)
-    call    *create_page_table(%rip)
+.global     entry, entry_ret
+entry:                                  # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
+    lea     save_uefi_regs(%rip), %rax
+    call    *%rax
+    lea     create_page_table(%rip), %rax
+    call    *%rax
     cli
-    lea     pml4e(%rip), %rax
-    mov     %rax, %cr3
-    call    *vmm_main(%rip)
+    lea     init_vmm_regs(%rip), %rax
+    call    *%rax
+    lea     vmm_gdtr(%rip), %rax
+    lgdtq   (%rax)
+    mov     %rsp, uefi_rsp(%rip)
+    lea     vmm_stack_end(%rip), %rax
+    mov     %rax, %rsp
+    lea     vmm_main(%rip), %rax
+    mov     %rax, vmm_main_ljmp(%rip)
+    lea     vmm_main_ljmp(%rip), %rax
+    .byte   0x48
+    lcall   *(%rax)
+entry_ret:
+    mov     uefi_rsp(%rip), %rsp
     ret
+
+.align      16
+vmm_main_ljmp:
+    .quad   0
+    .quad   0x18                        # CODE64
 
 .global     save_uefi_regs
 save_uefi_regs:
@@ -28,6 +46,8 @@ save_uefi_regs:
     str     uefi_tr(%rip)
     mov     %cr3, %rax
     mov     %rax, uefi_cr3(%rip)
+    mov     %cr4, %rax
+    mov     %rax, uefi_cr4(%rip)
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
     rdmsr
     mov     %ax, uefi_msr_ia32_sysenter_cs(%rip)
@@ -51,46 +71,73 @@ create_page_table:
     lea     pdpe(%rip), %rbx
     or      %rax, %rbx
     mov     %rbx, pml4e(%rip)           # pml4e[0]
+    lea     pdpe(%rip), %rdi
+    xor     %rcx, %rcx
     lea     pde0(%rip), %rbx
     or      %rax, %rbx
-    mov     %rbx, pdpe(%rip)            # pdpe[0]
+    mov     %rbx, (%rdi,%rcx,8)         # pdpe[0]
+    inc     %rcx
     lea     pde1(%rip), %rbx
     or      %rax, %rbx
-    mov     %rbx, pdpe(%rip)            # pdpe[1]
+    mov     %rbx, (%rdi,%rcx,8)         # pdpe[1]
+    inc     %rcx
     lea     pde2(%rip), %rbx
     or      %rax, %rbx
-    mov     %rbx, pdpe(%rip)            # pdpe[2]
+    mov     %rbx, (%rdi,%rcx,8)         # pdpe[2]
+    inc     %rcx
     lea     pde3(%rip), %rbx
     or      %rax, %rbx
-    mov     %rbx, pdpe(%rip)            # pdpe[3]
+    mov     %rbx, (%rdi,%rcx,8)         # pdpe[3]
+    xor     %rbx, %rbx
     mov     $0x83, %rbx                 # pagesize=2MiB + writable + present
-    xor     %ecx, %ecx
-0:  mov     %rbx, pde0(,%ecx,8)         # pde0[0] ~ pde0[511]
+    xor     %rcx, %rcx
+    lea     pde0(%rip), %rax
+0:  mov     %rbx, (%rax,%rcx,8)         # pde0[0] ~ pde0[511]
     add     $0x200000, %rbx             #
-    add     $1, %ecx                    #
-    cmp     $512, %ecx                  #
+    add     $1, %rcx                    #
+    cmp     $512, %rcx                  #
     jb      0b                          #
-    xor     %ecx, %ecx
-1:  mov     %rbx, pde1(,%ecx,8)         # pde1[0] ~ pde1[511]
+    xor     %rcx, %rcx
+    lea     pde1(%rip), %rax
+1:  mov     %rbx, (%rax,%rcx,8)         # pde1[0] ~ pde1[511]
     add     $0x200000, %rbx             #
-    add     $1, %ecx                    #
-    cmp     $512, %ecx                  #
+    add     $1, %rcx                    #
+    cmp     $512, %rcx                  #
     jb      1b                          #
-    xor     %ecx, %ecx
-2:  mov     %rbx, pde2(,%ecx,8)         # pde2[0] ~ pde2[511]
+    xor     %rcx, %rcx
+    lea     pde2(%rip), %rax
+2:  mov     %rbx, (%rax,%rcx,8)         # pde2[0] ~ pde2[511]
     add     $0x200000, %rbx             #
-    add     $1, %ecx                    #
-    cmp     $512, %ecx                  #
+    add     $1, %rcx                    #
+    cmp     $512, %rcx                  #
     jb      2b                          #
-    xor     %ecx, %ecx
-3:  mov     %rbx, pde3(,%ecx,8)         # pde3[0] ~ pde3[511]
+    xor     %rcx, %rcx
+    lea     pde3(%rip), %rax
+3:  mov     %rbx, (%rax,%rcx,8)         # pde3[0] ~ pde3[511]
     add     $0x200000, %rbx             #
-    add     $1, %ecx                    #
-    cmp     $512, %ecx                  #
+    add     $1, %rcx                    #
+    cmp     $512, %rcx                  #
     jb      3b                          #
     ret
 
-# ===== UEFI special registers store space =====
+.global     init_vmm_regs
+init_vmm_regs:
+    mov     $0x40, %ax
+    mov     %ax, vmm_gdtr(%rip)
+    lea     vmm_gdtr(%rip), %rax
+    lea     vmm_gdt(%rip), %rbx
+    mov     %rbx, 2(%rax)
+    lea     pml4e(%rip), %rax
+    mov     %rax, vmm_cr3(%rip)
+    mov     %rax, %cr3
+    mov     %cr4, %rax
+    or      $(0x20|0x80), %rax          # PAE + PGE
+    and     $(~0x40), %rax              # !MCE
+    mov     %rax, vmm_cr4(%rip)
+    mov     %rax, %cr4
+    ret
+
+# ===== UEFI special registers =====
 .global     uefi_cs
 uefi_cs:
     .short  0
@@ -117,6 +164,10 @@ uefi_ss:
 
 .global     uefi_cr3
 uefi_cr3:
+    .quad   0
+
+.global     uefi_cr4
+uefi_cr4:
     .quad   0
 
 .global     uefi_rsp
@@ -156,7 +207,37 @@ uefi_msr_ia32_sysenter_eip:
 .global     uefi_msr_ia32_sysenter_eip_high
 uefi_msr_ia32_sysenter_eip_high:
     .word   0
-# === UEFI special registers store space end ===
+# === UEFI special registers end ===
+
+# ===== VMM special registers =====
+.align      16
+.global     vmm_cr3
+vmm_cr3:
+    .quad   0
+
+.align      16
+.global     vmm_cr4
+vmm_cr4:
+    .quad   0
+
+.align      16
+.global     vmm_gdtr
+vmm_gdtr:
+    .short  0
+    .quad   0
+
+.align      16
+.global     vmm_gdt
+vmm_gdt:
+    .quad   0
+    .quad   0x00CF9B000000FFFF          # 0x08 CODE32, DPL=0
+    .quad   0x00CF93000000FFFF          # 0x10 DATA32, DPL=0
+    .quad   0x00AF9B000000FFFF          # 0x18 CODE64, DPL=0
+    .quad   0x00AF93000000FFFF          # 0x20 DATA64, DPL=0
+    .quad   0x00009B000000FFFF          # 0x28 CODE16, DPL=0
+    .quad   0x000093000000FFFF          # 0x30 DATA16, DPL=0
+    .quad   0x0000930B8000FFFF          # 0x38 DATA16, DPL=0
+# === VMM special registers end ===
 
 # ===== VMM page table =====
 .align      0x1000
@@ -189,3 +270,12 @@ pde2:
 pde3:
     .space  8*512
 # === VMM page table end ===
+
+# ===== VMM stack =====
+.align      1024
+.global     vmm_stack
+vmm_stack:
+    .space  1024*8
+.global     vmm_stack_end
+vmm_stack_end:
+# === VMM stack end ===
