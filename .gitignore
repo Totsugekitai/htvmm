@@ -2,3 +2,5 @@ target/
 *.map
 image/
 tools/
+
+*.elf*
