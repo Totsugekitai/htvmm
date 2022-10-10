@@ -11,17 +11,22 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     lea     init_vmm_regs(%rip), %rax
     call    *%rax
     lea     vmm_gdtr(%rip), %rax
-    lgdtq   (%rax)
+    lgdt    (%rax)
     mov     %rsp, uefi_rsp(%rip)
     lea     vmm_stack_end(%rip), %rax
     mov     %rax, %rsp
     lea     vmm_main(%rip), %rax
     mov     %rax, vmm_main_ljmp(%rip)
     lea     vmm_main_ljmp(%rip), %rax
-    .byte   0x48
+    .byte   0x48                        # REX.W prefix
     lcall   *(%rax)
 entry_ret:
     mov     uefi_rsp(%rip), %rsp
+    mov     uefi_cr3(%rip), %rax
+    mov     %rax, %cr3
+    lea     restore_uefi_regs(%rip), %rax
+    call    *%rax
+    sti
     ret
 
 .align      16
@@ -40,10 +45,14 @@ save_uefi_regs:
     mov     %fs, uefi_fs(%rip)
     mov     %gs, uefi_gs(%rip)
     mov     %ss, uefi_ss(%rip)
-    sgdt    uefi_gdtr(%rip)
-    sidt    uefi_idtr(%rip)
-    sldt    uefi_ldtr(%rip)
-    str     uefi_tr(%rip)
+    lea     uefi_gdtr(%rip), %rax
+    sgdt    (%rax)
+    lea     uefi_idtr(%rip), %rax
+    sidt    (%rax)
+    lea     uefi_ldtr(%rip), %rax
+    sldt    (%rax)
+    lea     uefi_tr(%rip), %rax
+    str     (%rax)
     mov     %cr3, %rax
     mov     %rax, uefi_cr3(%rip)
     mov     %cr4, %rax
@@ -59,6 +68,44 @@ save_uefi_regs:
     rdmsr
     mov     %eax, uefi_msr_ia32_sysenter_eip(%rip)
     mov     %edx, uefi_msr_ia32_sysenter_eip_high(%rip)
+    pop     %rdx
+    pop     %rcx
+    pop     %rax
+    ret
+
+.global     restore_uefi_regs
+restore_uefi_regs:
+    push    %rax
+    push    %rcx
+    push    %rdx
+    lea     uefi_gdtr(%rip), %rax
+    lgdt    (%rax)
+    lea     uefi_idtr(%rip), %rax
+    lidt    (%rax)
+    lea     uefi_ldtr(%rip), %rax
+    lldt    (%rax)
+    xor     %rax, %rax
+    mov     uefi_cs(%rip), %ax
+    push    %rax
+    lea     1f(%rip), %rax
+    push    %rax
+    lretq
+1:  mov     uefi_ds(%rip), %ds
+    mov     uefi_es(%rip), %es
+    mov     uefi_fs(%rip), %fs
+    mov     uefi_gs(%rip), %gs
+    mov     uefi_ss(%rip), %ss
+    mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
+    mov     uefi_msr_ia32_sysenter_cs(%rip), %eax
+    wrmsr
+    mov     $0x175, %rcx                # MSR_IA32_SYSENTER_ESP
+    mov     uefi_msr_ia32_sysenter_esp(%rip), %eax
+    mov     uefi_msr_ia32_sysenter_esp_high(%rip), %rdx
+    wrmsr
+    mov     $0x176, %rcx                # MSR_IA32_SYSENTER_EIP
+    mov     uefi_msr_ia32_sysenter_eip(%rip), %eax
+    mov     uefi_msr_ia32_sysenter_eip_high(%rip), %rdx
+    wrmsr
     pop     %rdx
     pop     %rcx
     pop     %rax

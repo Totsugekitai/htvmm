@@ -11,13 +11,13 @@ use core::{
 global_asm!(include_str!("entry.s"), options(att_syntax));
 
 #[no_mangle]
-pub extern "C" fn vmm_main(boot_args: *const BootArgs) -> ! {
+pub extern "C" fn vmm_main(boot_args: *const BootArgs) {
     let boot_args = unsafe { &*boot_args };
     unsafe {
         clear_bss(&boot_args.map_paddr);
-        loop {
-            asm!("hlt");
-        }
+        // loop {
+        //     asm!("hlt");
+        // }
     }
 }
 
