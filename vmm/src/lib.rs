@@ -38,7 +38,7 @@ extern "C" {
 unsafe fn clear_bss(map_paddr: &PhysAddr) {
     let bss = &__bss as *const u8 as u64;
     let bss_end = &__bss_end as *const u8 as u64;
-    let map_paddr = map_paddr.to_u64();
+    let map_paddr = map_paddr.as_u64();
     let start = map_paddr + bss;
     let count = (bss_end - bss) / 8;
     for i in 0..count {
