@@ -2,6 +2,8 @@
 #![no_main]
 #![feature(abi_efiapi)]
 
+mod paging;
+
 #[macro_use]
 extern crate alloc;
 
@@ -16,10 +18,13 @@ use uefi::{
     CStr16,
 };
 use uefi_services::{self, println};
+use x86_64::structures::paging::PhysFrame;
 
 const VMM_FILE_NAME: &'static str = "htvmm.elf";
 const PAGE_SIZE: usize = 0x1000;
-const MAX_ADDRESS: usize = 0x40000000;
+pub const MAX_ADDRESS: usize = 0x4000_0000;
+pub const VMM_ENTRY_VADDR: usize = 0x1_0000_0000;
+const ALLOCATE_BYTES_FOR_VMM: usize = 512 * 1024 * 1024;
 
 #[entry]
 fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
@@ -62,7 +67,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let alloc_paddr = boot_services.allocate_pages(
         AllocateType::MaxAddress(MAX_ADDRESS as usize),
         MemoryType::UNUSABLE,
-        (file_size as usize + PAGE_SIZE - 1) / PAGE_SIZE,
+        ALLOCATE_BYTES_FOR_VMM / PAGE_SIZE,
     );
     if alloc_paddr.is_err() {
         halt("[ERROR] allocate_pages");
@@ -97,13 +102,36 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     let entry_point = alloc_paddr + vmm_entry_offset;
     let vmm_entry: extern "sysv64" fn(*const BootArgs) =
-        unsafe { core::mem::transmute(entry_point) };
+        unsafe { core::mem::transmute(VMM_ENTRY_VADDR + (entry_point & 0x1f_ffff) as usize) };
 
-    println!("ENTER VMM: 0x{:x}", entry_point);
+    println!(
+        "ENTER VMM: 0x{:x}",
+        VMM_ENTRY_VADDR + (entry_point & 0x1f_ffff) as usize
+    );
+    let (vmm_pml4_table, cr3_flags) =
+        crate::paging::create_page_table(PhysAddr::new(entry_point), boot_services);
+
+    x86_64::instructions::interrupts::disable();
+    let (uefi_cr3, uefi_cr3_flags) = x86_64::registers::control::Cr3::read();
+    unsafe {
+        let uefi_cr3 = uefi_cr3.start_address().as_u64();
+        println!(
+            "UEFI CR3: {:x}, VMM CR3: {:x}",
+            uefi_cr3,
+            vmm_pml4_table.as_u64()
+        );
+        x86_64::registers::control::Cr3::write(
+            PhysFrame::from_start_address(x86_64::PhysAddr::new(vmm_pml4_table.as_u64())).unwrap(),
+            cr3_flags,
+        );
+    }
+
     vmm_entry(&boot_args as *const BootArgs); // enter VMM!!!
-    println!("[OK] vmm_entry");
 
-    loop {}
+    unsafe {
+        x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
+        x86_64::instructions::interrupts::enable();
+    }
 
     Status::SUCCESS
 }
