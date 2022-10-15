@@ -7,7 +7,7 @@ mod paging;
 #[macro_use]
 extern crate alloc;
 
-use common::{BootArgs, PhysAddr};
+use common::BootArgs;
 use core::arch::asm;
 use goblin::elf;
 use uefi::{
@@ -18,12 +18,12 @@ use uefi::{
     CStr16,
 };
 use uefi_services::{self, println};
-use x86_64::structures::paging::PhysFrame;
+use x86_64::{structures::paging::PhysFrame, PhysAddr};
 
 const VMM_FILE_NAME: &'static str = "htvmm.elf";
 const PAGE_SIZE: usize = 0x1000;
 pub const MAX_ADDRESS: usize = 0x4000_0000;
-pub const VMM_ENTRY_VADDR: usize = 0x1_0000_0000;
+pub const VMM_ENTRY_VADDR: usize = 0x1_0000_1000;
 const ALLOCATE_BYTES_FOR_VMM: usize = 512 * 1024 * 1024;
 
 #[entry]
@@ -93,35 +93,26 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let vmm_elf = vmm_elf.unwrap();
     let vmm_entry_offset = vmm_elf.program_headers[0].p_offset; // FIXME!!!
 
-    let map_paddr = PhysAddr::new(alloc_paddr);
-
+    let (uefi_cr3, uefi_cr3_flags) = x86_64::registers::control::Cr3::read();
+    let uefi_cr3_u64 = uefi_cr3.start_address().as_u64();
     let boot_args = BootArgs {
-        file_size,
-        map_paddr,
+        uefi_cr3: PhysAddr::new(uefi_cr3_u64),
+        uefi_cr3_flags,
     };
 
     let entry_point = alloc_paddr + vmm_entry_offset;
     let vmm_entry: extern "sysv64" fn(*const BootArgs) =
-        unsafe { core::mem::transmute(VMM_ENTRY_VADDR + (entry_point & 0x1f_ffff) as usize) };
+        unsafe { core::mem::transmute(VMM_ENTRY_VADDR) };
 
-    println!(
-        "ENTER VMM: 0x{:x}",
-        VMM_ENTRY_VADDR + (entry_point & 0x1f_ffff) as usize
-    );
+    println!("ENTER VMM: 0x{:x}", VMM_ENTRY_VADDR);
+
     let (vmm_pml4_table, cr3_flags) =
         crate::paging::create_page_table(PhysAddr::new(entry_point), boot_services);
 
     x86_64::instructions::interrupts::disable();
-    let (uefi_cr3, uefi_cr3_flags) = x86_64::registers::control::Cr3::read();
     unsafe {
-        let uefi_cr3 = uefi_cr3.start_address().as_u64();
-        println!(
-            "UEFI CR3: {:x}, VMM CR3: {:x}",
-            uefi_cr3,
-            vmm_pml4_table.as_u64()
-        );
         x86_64::registers::control::Cr3::write(
-            PhysFrame::from_start_address(x86_64::PhysAddr::new(vmm_pml4_table.as_u64())).unwrap(),
+            PhysFrame::from_start_address(PhysAddr::new(vmm_pml4_table.as_u64())).unwrap(),
             cr3_flags,
         );
     }
@@ -130,8 +121,10 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     unsafe {
         x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
-        x86_64::instructions::interrupts::enable();
     }
+    x86_64::instructions::interrupts::enable();
+
+    println!("VMM boot OK!");
 
     Status::SUCCESS
 }
