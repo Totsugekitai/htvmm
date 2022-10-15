@@ -4,3 +4,4 @@ image/
 tools/
 
 *.elf*
+.gdb_history
