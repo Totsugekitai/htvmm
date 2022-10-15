@@ -1,5 +1,5 @@
 OUTPUT_FORMAT(elf64-x86-64)
-ENTRY(vmm_main)
+ENTRY(entry)
 
 PHDRS {
     all PT_LOAD;
@@ -11,6 +11,7 @@ SIZE_HEADER = 0x1000;
 SECTIONS {
     . = base;
     . += SIZE_HEADER;
+    .entry      : { *(.entry*) }
     .text       : { *(.text*) }
     .rodata     : { *(.rodata*) }
     .data       : { *(.data*) }
