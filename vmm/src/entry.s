@@ -3,13 +3,8 @@
 
 .global     entry, entry_ret
 entry:                                  # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
-    lea     save_uefi_regs(%rip), %rax
-    call    *%rax
-    lea     create_page_table(%rip), %rax
-    call    *%rax
-    cli
-    lea     init_vmm_regs(%rip), %rax
-    call    *%rax
+    call    save_uefi_regs
+    call    init_vmm_regs
     lea     vmm_gdtr(%rip), %rax
     lgdt    (%rax)
     mov     %rsp, uefi_rsp(%rip)
@@ -22,11 +17,7 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     lcall   *(%rax)
 entry_ret:
     mov     uefi_rsp(%rip), %rsp
-    mov     uefi_cr3(%rip), %rax
-    mov     %rax, %cr3
-    lea     restore_uefi_regs(%rip), %rax
-    call    *%rax
-    sti
+    call    restore_uefi_regs
     ret
 
 .align      16
@@ -35,7 +26,7 @@ vmm_main_ljmp:
     .quad   0x18                        # CODE64
 
 .global     save_uefi_regs
-save_uefi_regs:
+save_uefi_regs:                         # 1st arg: uefi_cr3
     push    %rax
     push    %rcx
     push    %rdx
@@ -53,8 +44,7 @@ save_uefi_regs:
     sldt    (%rax)
     lea     uefi_tr(%rip), %rax
     str     (%rax)
-    mov     %cr3, %rax
-    mov     %rax, uefi_cr3(%rip)
+    mov     %rdi, uefi_cr3(%rip)
     mov     %cr4, %rax
     mov     %rax, uefi_cr4(%rip)
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
@@ -95,6 +85,8 @@ restore_uefi_regs:
     mov     uefi_fs(%rip), %fs
     mov     uefi_gs(%rip), %gs
     mov     uefi_ss(%rip), %ss
+    mov     uefi_cr4(%rip), %rax
+    mov     %rax, %cr4
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
     mov     uefi_msr_ia32_sysenter_cs(%rip), %eax
     wrmsr
@@ -111,62 +103,6 @@ restore_uefi_regs:
     pop     %rax
     ret
 
-# create 4GiB identity mapping
-.global     create_page_table
-create_page_table:
-    mov     $0x7, %rax                  # user access + writable + present
-    lea     pdpe(%rip), %rbx
-    or      %rax, %rbx
-    mov     %rbx, pml4e(%rip)           # pml4e[0]
-    lea     pdpe(%rip), %rdi
-    xor     %rcx, %rcx
-    lea     pde0(%rip), %rbx
-    or      %rax, %rbx
-    mov     %rbx, (%rdi,%rcx,8)         # pdpe[0]
-    inc     %rcx
-    lea     pde1(%rip), %rbx
-    or      %rax, %rbx
-    mov     %rbx, (%rdi,%rcx,8)         # pdpe[1]
-    inc     %rcx
-    lea     pde2(%rip), %rbx
-    or      %rax, %rbx
-    mov     %rbx, (%rdi,%rcx,8)         # pdpe[2]
-    inc     %rcx
-    lea     pde3(%rip), %rbx
-    or      %rax, %rbx
-    mov     %rbx, (%rdi,%rcx,8)         # pdpe[3]
-    xor     %rbx, %rbx
-    mov     $0x83, %rbx                 # pagesize=2MiB + writable + present
-    xor     %rcx, %rcx
-    lea     pde0(%rip), %rax
-0:  mov     %rbx, (%rax,%rcx,8)         # pde0[0] ~ pde0[511]
-    add     $0x200000, %rbx             #
-    add     $1, %rcx                    #
-    cmp     $512, %rcx                  #
-    jb      0b                          #
-    xor     %rcx, %rcx
-    lea     pde1(%rip), %rax
-1:  mov     %rbx, (%rax,%rcx,8)         # pde1[0] ~ pde1[511]
-    add     $0x200000, %rbx             #
-    add     $1, %rcx                    #
-    cmp     $512, %rcx                  #
-    jb      1b                          #
-    xor     %rcx, %rcx
-    lea     pde2(%rip), %rax
-2:  mov     %rbx, (%rax,%rcx,8)         # pde2[0] ~ pde2[511]
-    add     $0x200000, %rbx             #
-    add     $1, %rcx                    #
-    cmp     $512, %rcx                  #
-    jb      2b                          #
-    xor     %rcx, %rcx
-    lea     pde3(%rip), %rax
-3:  mov     %rbx, (%rax,%rcx,8)         # pde3[0] ~ pde3[511]
-    add     $0x200000, %rbx             #
-    add     $1, %rcx                    #
-    cmp     $512, %rcx                  #
-    jb      3b                          #
-    ret
-
 .global     init_vmm_regs
 init_vmm_regs:
     mov     $0x40, %ax
@@ -174,9 +110,8 @@ init_vmm_regs:
     lea     vmm_gdtr(%rip), %rax
     lea     vmm_gdt(%rip), %rbx
     mov     %rbx, 2(%rax)
-    lea     pml4e(%rip), %rax
+    mov     %cr3, %rax
     mov     %rax, vmm_cr3(%rip)
-    mov     %rax, %cr3
     mov     %cr4, %rax
     or      $(0x20|0x80), %rax          # PAE + PGE
     and     $(~0x40), %rax              # !MCE
@@ -185,62 +120,77 @@ init_vmm_regs:
     ret
 
 # ===== UEFI special registers =====
+.align      2
 .global     uefi_cs
 uefi_cs:
     .short  0
 
+.align      2
 .global     uefi_ds
 uefi_ds:
     .short  0
 
+.align      2
 .global     uefi_es
 uefi_es:
     .short  0
 
+.align      2
 .global     uefi_fs
 uefi_fs:
     .short  0
 
+.align      2
 .global     uefi_gs
 uefi_gs:
     .short  0
 
+.align      2
 .global     uefi_ss
 uefi_ss:
     .short  0
 
+.align      8
 .global     uefi_cr3
 uefi_cr3:
     .quad   0
 
+.align      8
 .global     uefi_cr4
 uefi_cr4:
     .quad   0
 
+.align      8
 .global     uefi_rsp
 uefi_rsp:
     .quad   0
 
+.align      16
 .global     uefi_gdtr
 uefi_gdtr:
     .space  16
 
+.align      16
 .global     uefi_idtr
 uefi_idtr:
     .space  16
 
+.align      2
 .global     uefi_ldtr
 uefi_ldtr:
     .short  0
 
+.align      2
 .global     uefi_tr
 uefi_tr:
     .short  0
 
+.align      2
 .global     uefi_msr_ia32_sysenter_cs
 uefi_msr_ia32_sysenter_cs:
     .short  0
 
+.align      16
 .global     uefi_msr_ia32_sysenter_esp
 uefi_msr_ia32_sysenter_esp:
     .word   0
@@ -248,6 +198,7 @@ uefi_msr_ia32_sysenter_esp:
 uefi_msr_ia32_sysenter_esp_high:
     .word   0
 
+.align      16
 .global     uefi_msr_ia32_sysenter_eip
 uefi_msr_ia32_sysenter_eip:
     .word   0
@@ -257,12 +208,12 @@ uefi_msr_ia32_sysenter_eip_high:
 # === UEFI special registers end ===
 
 # ===== VMM special registers =====
-.align      16
+.align      8
 .global     vmm_cr3
 vmm_cr3:
     .quad   0
 
-.align      16
+.align      8
 .global     vmm_cr4
 vmm_cr4:
     .quad   0
@@ -286,43 +237,11 @@ vmm_gdt:
     .quad   0x0000930B8000FFFF          # 0x38 DATA16, DPL=0
 # === VMM special registers end ===
 
-# ===== VMM page table =====
-.align      0x1000
-.global     pml4e
-pml4e:
-    .space  8*512
-
-.align      0x1000
-.global     pdpe
-pdpe:
-    .space  8*512
-
-.align      0x1000
-.global     pde0
-pde0:
-    .space  8*512
-
-.align      0x1000
-.global     pde1
-pde1:
-    .space  8*512
-
-.align      0x1000
-.global     pde2
-pde2:
-    .space  8*512
-
-.align      0x1000
-.global     pde3
-pde3:
-    .space  8*512
-# === VMM page table end ===
-
 # ===== VMM stack =====
 .align      1024
 .global     vmm_stack
 vmm_stack:
-    .space  1024*8
+    .space  0x1000*8
 .global     vmm_stack_end
 vmm_stack_end:
 # === VMM stack end ===
