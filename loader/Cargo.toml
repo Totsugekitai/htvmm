@@ -3,8 +3,6 @@ name = "htloader"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 uefi = { version = "0.17.0", features = ["exts", "alloc"] }
 uefi-services = "0.14.0"
@@ -13,5 +11,6 @@ goblin = { version = "0.5.4", default-features = false, features = [
     "endian_fd",
     "elf32",
 ] }
+x86_64 = "0.14.10"
 
 common = { path = "../common" }
