@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use common::{BootArgs, PhysAddr};
+use common::BootArgs;
 use core::{
     arch::{asm, global_asm},
     panic::PanicInfo,
@@ -11,10 +11,10 @@ use core::{
 global_asm!(include_str!("entry.s"), options(att_syntax));
 
 #[no_mangle]
-pub extern "C" fn vmm_main(boot_args: *const BootArgs) {
-    let boot_args = unsafe { &*boot_args };
+pub unsafe extern "C" fn vmm_main(boot_args: *const BootArgs) {
+    let _boot_args = (&*boot_args).clone();
     unsafe {
-        clear_bss(&boot_args.map_paddr);
+        clear_bss();
         // loop {
         //     asm!("hlt");
         // }
@@ -35,11 +35,10 @@ extern "C" {
     static __bss_end: u8;
 }
 
-unsafe fn clear_bss(map_paddr: &PhysAddr) {
+unsafe fn clear_bss() {
     let bss = &__bss as *const u8 as u64;
     let bss_end = &__bss_end as *const u8 as u64;
-    let map_paddr = map_paddr.as_u64();
-    let start = map_paddr + bss;
+    let start = bss;
     let count = (bss_end - bss) / 8;
     for i in 0..count {
         let dst = (start + i * 8) as *mut u64;
