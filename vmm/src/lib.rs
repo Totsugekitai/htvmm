@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 use common::BootArgs;
 use core::{
@@ -13,12 +12,10 @@ global_asm!(include_str!("entry.s"), options(att_syntax));
 #[no_mangle]
 pub unsafe extern "C" fn vmm_main(boot_args: *const BootArgs) {
     let _boot_args = (&*boot_args).clone();
-    unsafe {
-        clear_bss();
-        // loop {
-        //     asm!("hlt");
-        // }
-    }
+    clear_bss();
+    // loop {
+    //     asm!("hlt");
+    // }
 }
 
 #[panic_handler]
