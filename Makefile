@@ -52,6 +52,7 @@ clean: clean-loader clean-vmm
 
 .PHONY: run
 run:
+> rm -f image/htvmm.elf image/EFI/BOOT/BOOTX64.EFI
 > cp vmm/htvmm.elf.$(build_mode) image/htvmm.elf
 > cp loader/target/x86_64-unknown-uefi/$(build_mode)/htloader.efi image/EFI/BOOT/BOOTX64.EFI
 > $(QEMU) $(QEMUFLAGS)
