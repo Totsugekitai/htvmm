@@ -33,9 +33,9 @@ pub trait Cpu {
 }
 
 pub struct CpuError {
-    kind: CpuErrorKind,
+    _kind: CpuErrorKind,
 }
 
 pub enum CpuErrorKind {
-    NotSupported,
+    _NotSupported,
 }
