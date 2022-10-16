@@ -241,7 +241,7 @@ vmm_gdt:
 .align      1024
 .global     vmm_stack
 vmm_stack:
-    .space  0x1000*8
+    .space  0x1000*32
 .global     vmm_stack_end
 vmm_stack_end:
 # === VMM stack end ===
