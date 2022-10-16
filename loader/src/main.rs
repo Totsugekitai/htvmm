@@ -7,7 +7,7 @@ mod paging;
 #[macro_use]
 extern crate alloc;
 
-use common::BootArgs;
+use common::{BootArgs, VMM_AREA_SIZE};
 use core::arch::asm;
 use goblin::elf;
 use uefi::{
@@ -24,7 +24,6 @@ const VMM_FILE_NAME: &'static str = "htvmm.elf";
 const PAGE_SIZE: usize = 0x1000;
 pub const MAX_ADDRESS: usize = 0x4000_0000;
 pub const VMM_ENTRY_VADDR: usize = 0x1_0000_1000;
-const ALLOCATE_BYTES_FOR_VMM: usize = 512 * 1024 * 1024;
 
 #[entry]
 fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
@@ -67,7 +66,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let alloc_paddr = boot_services.allocate_pages(
         AllocateType::MaxAddress(MAX_ADDRESS as usize),
         MemoryType::UNUSABLE,
-        ALLOCATE_BYTES_FOR_VMM / PAGE_SIZE,
+        VMM_AREA_SIZE as usize / PAGE_SIZE,
     );
     if alloc_paddr.is_err() {
         halt("[ERROR] allocate_pages");
