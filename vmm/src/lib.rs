@@ -10,10 +10,7 @@ extern crate alloc;
 
 use crate::arch::intel::IntelCpu;
 use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE, VMM_HEAP_HEAD_VADDR};
-use core::{
-    arch::{asm, global_asm},
-    panic::PanicInfo,
-};
+use core::{arch::global_asm, panic::PanicInfo};
 use cpu::Cpu;
 
 extern "C" {
@@ -39,8 +36,6 @@ pub unsafe extern "C" fn vmm_main(boot_args: *const BootArgs) {
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
     loop {
-        unsafe {
-            asm!("hlt");
-        }
+        x86_64::instructions::hlt();
     }
 }
