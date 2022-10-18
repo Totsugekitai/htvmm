@@ -64,4 +64,14 @@ cp `find /usr -type f -name "OVMF_CODE.fd" 2> /dev/null | head -n 1` tools/ovmf 
 cp `find /usr -type f -name "OVMF_VARS.fd" 2> /dev/null | head -n 1` tools/ovmf
 > mkdir -p image/EFI/BOOT
 
+.PHONY: install
+install:
+> mkdir -p /boot/efi/EFI/htvmm
+> cp vmm/htvmm.elf.$(build_mode) /boot/efi/htvmm.elf
+> cp loader/target/x86_64-unknown-uefi/$(build_mode)/htloader.efi /boot/efi/EFI/htvmm/htloader.efi
+
+.PHONY: bootnext
+bootnext:
+> efibootmgr -n `efibootmgr | grep htvmm | cut -c 5-8`
+
 .FORCE:
