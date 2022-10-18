@@ -8,7 +8,6 @@ mod paging;
 extern crate alloc;
 
 use common::{BootArgs, VMM_AREA_SIZE};
-use core::arch::asm;
 use goblin::elf;
 use uefi::{
     data_types::Align,
@@ -125,12 +124,16 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     println!("VMM boot OK!");
 
+    // loop {
+    //     x86_64::instructions::hlt();
+    // }
+
     Status::SUCCESS
 }
 
 fn halt(error_msg: &str) -> ! {
     println!("{error_msg}");
     loop {
-        unsafe { asm!("hlt") };
+        x86_64::instructions::hlt();
     }
 }
