@@ -1,14 +1,10 @@
 mod vmx;
 
 use crate::cpu::Cpu;
-use core::arch::asm;
-use x86_64::registers::{
-    control::{Cr4, Cr4Flags},
-    model_specific::Msr,
-};
+use x86_64::registers::model_specific::Msr;
 
 pub struct IntelCpu {
-    vmxon_region: &'static VmxonRegion,
+    vmxon_region: &'static vmx::VmxonRegion,
 }
 
 impl IntelCpu {
@@ -33,14 +29,10 @@ impl IntelCpu {
         (lock & vmxon_in_smx & vmxon_outside_smx) == 1
     }
 
-    unsafe fn vmxon(&self) {
-        let cr4 = Cr4::read();
-        let cr4 = cr4 | Cr4Flags::VIRTUAL_MACHINE_EXTENSIONS;
-        Cr4::write(cr4);
-
-        let vmxon_region = self.vmxon_region.ptr_head();
-
-        asm!("vmxon [rax]", in("rax") vmxon_region);
+    fn vmxon(&self) {
+        unsafe {
+            vmx::vmxon(self.vmxon_region);
+        }
     }
 }
 
@@ -50,9 +42,7 @@ impl Cpu for IntelCpu {
     }
 
     fn enable_virtualization(&mut self) -> Result<(), crate::cpu::CpuError> {
-        unsafe {
-            Self::vmxon(self);
-        }
+        Self::vmxon(self);
         Ok(())
     }
 
@@ -61,17 +51,4 @@ impl Cpu for IntelCpu {
     }
 }
 
-#[repr(align(4096))]
-struct VmxonRegion([u8; 4096]);
-
-impl VmxonRegion {
-    const fn new() -> Self {
-        Self([0; 4096])
-    }
-
-    fn ptr_head(&self) -> u64 {
-        &self.0[0] as *const u8 as u64
-    }
-}
-
-const VMXON_REGION: VmxonRegion = VmxonRegion::new();
+const VMXON_REGION: vmx::VmxonRegion = vmx::VmxonRegion::new();
