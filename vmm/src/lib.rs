@@ -4,7 +4,6 @@
 mod allocator;
 mod arch;
 mod cpu;
-mod virt;
 
 extern crate alloc;
 
