@@ -18,7 +18,7 @@ QEMUFLAGS := -s -m 8G \
 -drive if=pflash,format=raw,file=tools/ovmf/OVMF_VARS.fd \
 -drive if=ide,file=fat:rw:image,index=0,media=disk \
 -monitor stdio \
--enable-kvm -cpu kvm64,+vmx
+-enable-kvm -cpu host,+vmx
 
 .PHONY: default
 default: build
