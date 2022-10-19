@@ -1,16 +1,21 @@
+mod vmcs;
 mod vmx;
 
 use crate::cpu::Cpu;
+use vmcs::VmcsRegion;
+use vmx::{vmxon, VmxonRegion};
 use x86_64::registers::model_specific::Msr;
 
 pub struct IntelCpu {
-    vmxon_region: &'static vmx::VmxonRegion,
+    vmxon_region: VmxonRegion,
+    vmcs_region: VmcsRegion,
 }
 
 impl IntelCpu {
     pub unsafe fn new() -> Self {
         Self {
-            vmxon_region: &VMXON_REGION,
+            vmxon_region: VmxonRegion::new(),
+            vmcs_region: VmcsRegion::new(),
         }
     }
 
@@ -24,14 +29,13 @@ impl IntelCpu {
         let msr_ia32_feature_control = Msr::new(0x0000003a); // IA32_FEATURE_CONTROL
         let ia32_feature_control = unsafe { msr_ia32_feature_control.read() };
         let lock = ia32_feature_control & 0b1;
-        let vmxon_in_smx = (ia32_feature_control >> 1) & 0b1;
-        let vmxon_outside_smx = (ia32_feature_control >> 2) & 0b1;
-        (lock & vmxon_in_smx & vmxon_outside_smx) == 1
+
+        lock == 1
     }
 
-    fn vmxon(&self) {
+    fn vmxon(&mut self) {
         unsafe {
-            vmx::vmxon(self.vmxon_region);
+            vmxon(&mut self.vmxon_region);
         }
     }
 }
@@ -49,6 +53,6 @@ impl Cpu for IntelCpu {
     fn disable_virtualization(&mut self) -> Result<(), crate::cpu::CpuError> {
         Ok(())
     }
-}
 
-const VMXON_REGION: vmx::VmxonRegion = vmx::VmxonRegion::new();
+    unsafe fn init_as_bsp(&mut self) {}
+}

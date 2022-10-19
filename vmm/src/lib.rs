@@ -29,9 +29,11 @@ pub unsafe extern "C" fn vmm_main(boot_args: *const BootArgs) {
     for _ in v {
         x86_64::instructions::nop();
     }
-    if intel.is_virtualization_supported() {
-        let _ = intel.enable_virtualization();
+    if !intel.is_virtualization_supported() {
+        panic!();
     }
+    let _ = intel.enable_virtualization();
+    intel.init_as_bsp();
 }
 
 #[panic_handler]

@@ -30,6 +30,7 @@ pub trait Cpu {
     fn is_virtualization_supported(&self) -> bool;
     fn enable_virtualization(&mut self) -> Result<(), CpuError>;
     fn disable_virtualization(&mut self) -> Result<(), CpuError>;
+    unsafe fn init_as_bsp(&mut self);
 }
 
 pub struct CpuError {
