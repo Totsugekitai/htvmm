@@ -1,7 +1,7 @@
 mod vmcs;
 mod vmx;
 
-use crate::cpu::Cpu;
+use crate::cpu::{Cpu, CpuError, CpuErrorKind};
 use vmcs::VmcsRegion;
 use vmx::{vmxon, VmxonRegion};
 use x86_64::registers::model_specific::Msr;
@@ -46,13 +46,20 @@ impl Cpu for IntelCpu {
     }
 
     fn enable_virtualization(&mut self) -> Result<(), crate::cpu::CpuError> {
-        Self::vmxon(self);
-        Ok(())
+        if !self.is_virtualization_supported() {
+            Err(CpuError::new(CpuErrorKind::NotSupported))
+        } else {
+            Self::vmxon(self);
+            Ok(())
+        }
     }
 
     fn disable_virtualization(&mut self) -> Result<(), crate::cpu::CpuError> {
         Ok(())
     }
 
-    unsafe fn init_as_bsp(&mut self) {}
+    unsafe fn init_as_bsp(&mut self) {
+        self.vmcs_region.clear();
+        self.vmcs_region.load();
+    }
 }

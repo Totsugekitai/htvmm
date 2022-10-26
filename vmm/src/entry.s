@@ -86,6 +86,7 @@ restore_uefi_regs:
     mov     uefi_gs(%rip), %gs
     mov     uefi_ss(%rip), %ss
     mov     uefi_cr4(%rip), %rax
+    or      $0b10000000000000, %rax     # VMXE bit(intel only, FIXME)
     mov     %rax, %cr4
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
     mov     uefi_msr_ia32_sysenter_cs(%rip), %eax

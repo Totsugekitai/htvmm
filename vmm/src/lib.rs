@@ -12,27 +12,26 @@ use alloc::vec;
 use common::{BootArgs, VMM_HEAP_HEAD_VADDR, VMM_HEAP_SIZE};
 use core::{arch::global_asm, panic::PanicInfo};
 use cpu::Cpu;
-
-extern "C" {
-    static __bss: u8;
-    static __bss_end: u8;
-}
+use crossbeam::atomic::AtomicCell;
 
 global_asm!(include_str!("entry.s"), options(att_syntax));
 
+pub static BOOT_ARGS: AtomicCell<BootArgs> = AtomicCell::new(BootArgs::new());
+
 #[no_mangle]
 pub unsafe extern "C" fn vmm_main(boot_args: *const BootArgs) {
-    let _boot_args = (&*boot_args).clone();
+    BOOT_ARGS.store(boot_args.as_ref().unwrap().clone());
     allocator::init(VMM_HEAP_HEAD_VADDR, VMM_HEAP_SIZE as usize);
+
     let mut intel = IntelCpu::new();
     let v = vec![1; 0x1000];
     for _ in v {
         x86_64::instructions::nop();
     }
-    if !intel.is_virtualization_supported() {
+
+    if let Err(_e) = intel.enable_virtualization() {
         panic!();
     }
-    let _ = intel.enable_virtualization();
     intel.init_as_bsp();
 }
 

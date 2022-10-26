@@ -34,9 +34,15 @@ pub trait Cpu {
 }
 
 pub struct CpuError {
-    _kind: CpuErrorKind,
+    kind: CpuErrorKind,
+}
+
+impl CpuError {
+    pub fn new(kind: CpuErrorKind) -> Self {
+        Self { kind }
+    }
 }
 
 pub enum CpuErrorKind {
-    _NotSupported,
+    NotSupported,
 }
