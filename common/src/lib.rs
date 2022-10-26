@@ -12,4 +12,15 @@ pub const VMM_HEAP_SIZE: u64 = 128 * 1024 * 1024;
 pub struct BootArgs {
     pub uefi_cr3: PhysAddr,
     pub uefi_cr3_flags: Cr3Flags,
+    pub vmm_phys_offset: i64,
+}
+
+impl BootArgs {
+    pub const fn new() -> Self {
+        Self {
+            uefi_cr3: PhysAddr::new(0),
+            uefi_cr3_flags: Cr3Flags::empty(),
+            vmm_phys_offset: 0,
+        }
+    }
 }
