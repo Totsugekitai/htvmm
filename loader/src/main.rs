@@ -7,7 +7,7 @@ mod paging;
 #[macro_use]
 extern crate alloc;
 
-use common::{BootArgs, VMM_AREA_SIZE};
+use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE};
 use goblin::elf;
 use uefi::{
     data_types::Align,
@@ -96,6 +96,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let boot_args = BootArgs {
         uefi_cr3: PhysAddr::new(uefi_cr3_u64),
         uefi_cr3_flags,
+        vmm_phys_offset: alloc_paddr as i64 - VMM_AREA_HEAD_VADDR as i64,
     };
 
     let entry_point = alloc_paddr + vmm_entry_offset;
