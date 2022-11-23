@@ -1,10 +1,19 @@
 use crate::{
     arch::intel::vmx::{vmclear, vmptrld},
+    cpu::{Gdtr, Tr},
     BOOT_ARGS,
 };
 use alloc::alloc::alloc;
 use core::{alloc::Layout, ptr, slice};
-use x86_64::{registers::model_specific::Msr, PhysAddr};
+use x86_64::{
+    registers::{
+        model_specific::Msr,
+        segmentation::{Segment, CS, DS, ES, FS, GS, SS},
+    },
+    PhysAddr,
+};
+
+use super::vmx::vmwrite;
 
 pub struct VmcsRegion(*mut u8);
 
@@ -46,6 +55,71 @@ impl VmcsRegion {
             vmptrld(self);
         }
     }
+
+    fn write(&mut self, field: VmcsField, val: u64) {
+        unsafe {
+            vmwrite(field, val);
+        }
+    }
+
+    pub fn setup(&mut self) {
+        self.setup_guest_state_area();
+        self.setup_host_state_area();
+        self.setup_vm_execution_control_fields();
+        self.setup_vm_exit_control_fields();
+        self.setup_vm_entry_control_fields();
+        self.setup_vm_exit_infomation_fields();
+    }
+
+    fn setup_guest_state_area(&mut self) {
+        let debugctl = unsafe { Msr::new(0x1d9).read() };
+        let debugctl_low = debugctl & 0xffff_ffff;
+        let debugctl_high = (debugctl >> 32) & 0xffff_ffff;
+        self.write(VmcsField::GuestIa32Debugctl, debugctl_low);
+        self.write(VmcsField::GuestIa32DebugctlHigh, debugctl_high);
+
+        self.write(VmcsField::VmcsLinkPointer, !0u64);
+    }
+
+    fn setup_host_state_area(&mut self) {
+        let cs = CS::get_reg();
+        let ds = DS::get_reg();
+        let es = ES::get_reg();
+        let fs = FS::get_reg();
+        let gs = GS::get_reg();
+        let ss = SS::get_reg();
+        self.write(VmcsField::HostCsSelector, cs.0 as u64);
+        self.write(VmcsField::HostDsSelector, ds.0 as u64);
+        self.write(VmcsField::HostEsSelector, es.0 as u64);
+        self.write(VmcsField::HostFsSelector, fs.0 as u64);
+        self.write(VmcsField::HostGsSelector, gs.0 as u64);
+        self.write(VmcsField::HostSsSelector, ss.0 as u64);
+
+        let gdtr = Gdtr::get_reg();
+        let tr = Tr::get_reg();
+        self.write(VmcsField::HostTrSelector, tr.as_u64());
+        self.write(VmcsField::HostGdtrBase, gdtr.base());
+    }
+
+    fn setup_vm_execution_control_fields(&mut self) {
+        self.write(VmcsField::TscOffset, 0);
+        self.write(VmcsField::TscOffsetHigh, 0);
+
+        self.write(VmcsField::PageFaultErrorCodeMask, 0);
+        self.write(VmcsField::PageFaultErrorCodeMatch, 0);
+    }
+
+    fn setup_vm_exit_control_fields(&mut self) {
+        self.write(VmcsField::VmExitMsrLoadCount, 0);
+        self.write(VmcsField::VmExitMsrStoreCount, 0);
+    }
+
+    fn setup_vm_entry_control_fields(&mut self) {
+        self.write(VmcsField::VmEntryMsrLoadCount, 0);
+        self.write(VmcsField::VmEntryIntrInfoField, 0);
+    }
+
+    fn setup_vm_exit_infomation_fields(&mut self) {}
 }
 
 #[repr(u32)]

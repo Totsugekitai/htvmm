@@ -96,7 +96,8 @@ unsafe fn modify_table(
     pd_table.zero();
 
     let vmm_entry_phys = vmm_entry_phys.as_u64() & 0xffff_ffff_ffe0_0000;
-    for i in 0..(VMM_AREA_SIZE as usize / 0x200000) {
+    // for i in 0..(VMM_AREA_SIZE as usize / 0x200000) {
+    for i in 0..512 {
         let pde = &mut pd_table[i];
         pde.set_addr(
             PhysAddr::new(vmm_entry_phys + 0x20_0000 * i as u64),

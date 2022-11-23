@@ -7,7 +7,7 @@ pub const VMM_AREA_HEAD_VADDR: usize = 0x1_0000_0000;
 pub const VMM_HEAP_HEAD_VADDR: usize = VMM_AREA_HEAD_VADDR + (128 * 1024 * 1024);
 pub const VMM_HEAP_SIZE: u64 = 128 * 1024 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct BootArgs {
     pub uefi_cr3: PhysAddr,

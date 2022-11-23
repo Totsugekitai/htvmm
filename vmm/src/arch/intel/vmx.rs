@@ -3,21 +3,41 @@ use alloc::alloc::alloc;
 use core::{alloc::Layout, arch::asm, ptr, slice};
 use x86_64::{
     registers::{
-        control::{Cr4, Cr4Flags},
+        control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
         model_specific::Msr,
     },
     PhysAddr,
 };
 
-pub unsafe fn vmxon(vmxon_region: &mut VmxonRegion) {
+use super::vmcs::VmcsField;
+
+pub unsafe fn vmxon(vmxon_region: &mut VmxonRegion) -> Result<(), VmxError> {
+    let cr4 = Cr4::read();
+    let cr4_fixed_0 = Msr::new(0x488).read();
+    let cr4_fixed_1 = Msr::new(0x489).read();
+    let cr4 = cr4 & Cr4Flags::from_bits_unchecked(cr4_fixed_1);
+    let cr4 = cr4 | Cr4Flags::from_bits_unchecked(cr4_fixed_0);
+    Cr4::write(cr4);
     let cr4 = Cr4::read();
     let cr4 = cr4 | Cr4Flags::VIRTUAL_MACHINE_EXTENSIONS;
     Cr4::write(cr4);
 
-    let paddr = vmxon_region.paddr();
-    if let Err(_e) = asm_vmxon(paddr) {
-        panic!();
+    let cr0 = Cr0::read();
+    let cr0_fixed_0 = Msr::new(0x486).read();
+    let cr0_fixed_1 = Msr::new(0x487).read();
+    let cr0 = cr0 & Cr0Flags::from_bits_unchecked(cr0_fixed_1);
+    let cr0 = cr0 | Cr0Flags::from_bits_unchecked(cr0_fixed_0);
+    Cr0::write(cr0);
+
+    let mut msr_ia32_feature_control = Msr::new(0x0000003a); // IA32_FEATURE_CONTROL
+    let ia32_feature_control = unsafe { msr_ia32_feature_control.read() };
+    let lock = ia32_feature_control & 0b1 == 1;
+    if !lock {
+        msr_ia32_feature_control.write(ia32_feature_control | 5);
     }
+
+    let paddr = vmxon_region.paddr();
+    asm_vmxon(paddr)
 }
 
 unsafe fn asm_vmxon(phys_addr: PhysAddr) -> Result<(), VmxError> {
@@ -49,6 +69,18 @@ pub unsafe fn vmptrld(vmcs_region: &VmcsRegion) {
 unsafe fn asm_vmptrld(phys_addr: PhysAddr) -> Result<(), VmxError> {
     let mut flags;
     asm!("vmptrld [rdi]; pushfq; pop rax", in("rdi") &phys_addr.as_u64(), out("rax") flags);
+    check_vmx_error(flags)
+}
+
+pub unsafe fn vmwrite(field: VmcsField, val: u64) {
+    if let Err(_e) = asm_vmwrite(field, val) {
+        panic!();
+    }
+}
+
+unsafe fn asm_vmwrite(field: VmcsField, val: u64) -> Result<(), VmxError> {
+    let mut flags;
+    asm!("vmwrite rdi, rsi; pushfq; pop rax", in("rdi") field as u32, in("rsi") val, out("rax") flags);
     check_vmx_error(flags)
 }
 
@@ -87,10 +119,8 @@ impl VmxonRegion {
     }
 
     fn paddr(&self) -> PhysAddr {
-        let virt = i64::try_from(self.as_mut_ptr() as u64).unwrap();
-        let phys = unsafe {
-            u64::try_from(virt + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset).unwrap()
-        };
+        let virt = self.as_mut_ptr() as u64 as i64;
+        let phys = (virt + BOOT_ARGS.load().vmm_phys_offset) as u64;
         PhysAddr::new(phys)
     }
 }

@@ -12,6 +12,13 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     mov     %rax, %rsp
     lea     vmm_main(%rip), %rax
     mov     %rax, vmm_main_ljmp(%rip)
+    mov     $0x20, %rax                 # DATA64
+    mov     %eax, %ds
+    mov     %eax, %es
+    mov     %eax, %ss
+    xor     %rax, %rax
+    mov     %eax, %fs
+    mov     %eax, %gs
     lea     vmm_main_ljmp(%rip), %rax
     .byte   0x48                        # REX.W prefix
     lcall   *(%rax)
@@ -44,7 +51,10 @@ save_uefi_regs:                         # 1st arg: uefi_cr3
     sldt    (%rax)
     lea     uefi_tr(%rip), %rax
     str     (%rax)
-    mov     %rdi, uefi_cr3(%rip)
+    mov     %cr0, %rax
+    mov     %rax, uefi_cr0(%rip)
+    mov     (%rdi), %rax
+    mov     %rax, uefi_cr3(%rip)
     mov     %cr4, %rax
     mov     %rax, uefi_cr4(%rip)
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
@@ -88,13 +98,18 @@ restore_uefi_regs:
     mov     uefi_cr4(%rip), %rax
     or      $0b10000000000000, %rax     # VMXE bit(intel only, FIXME)
     mov     %rax, %cr4
+    mov     uefi_cr0(%rip), %rax
+    mov     %rax, %cr0
+    xor     %rax, %rax
     mov     $0x174, %rcx                # MSR_IA32_SYSENTER_CS
     mov     uefi_msr_ia32_sysenter_cs(%rip), %eax
     wrmsr
+    xor     %rax, %rax
     mov     $0x175, %rcx                # MSR_IA32_SYSENTER_ESP
     mov     uefi_msr_ia32_sysenter_esp(%rip), %eax
     mov     uefi_msr_ia32_sysenter_esp_high(%rip), %rdx
     wrmsr
+    xor     %rax, %rax
     mov     $0x176, %rcx                # MSR_IA32_SYSENTER_EIP
     mov     uefi_msr_ia32_sysenter_eip(%rip), %eax
     mov     uefi_msr_ia32_sysenter_eip_high(%rip), %rdx
@@ -106,6 +121,8 @@ restore_uefi_regs:
 
 .global     init_vmm_regs
 init_vmm_regs:
+    push    %rax
+    push    %rbx
     mov     $0x40, %ax
     mov     %ax, vmm_gdtr(%rip)
     lea     vmm_gdtr(%rip), %rax
@@ -114,11 +131,17 @@ init_vmm_regs:
     mov     %cr3, %rax
     mov     %rax, vmm_cr3(%rip)
     mov     %cr4, %rax
-    or      $(0x20|0x80), %rax          # PAE + PGE
+    or      $(0x20|0x80|0x2000), %rax   # PAE + PGE + VMXE
     and     $(~0x40), %rax              # !MCE
     mov     %rax, vmm_cr4(%rip)
     mov     %rax, %cr4
+    pop     %rbx
+    pop     %rax
     ret
+
+# .global     call_uefi_fn
+# call_uefi_fn:                           # pub extern "sysv64" unsafe fn call_uefi_fn(fn_ptr_u64: u64, arg: u64);
+    
 
 # ===== UEFI special registers =====
 .align      2
@@ -150,6 +173,11 @@ uefi_gs:
 .global     uefi_ss
 uefi_ss:
     .short  0
+
+.align      8
+.global     uefi_cr0
+uefi_cr0:
+    .quad   0
 
 .align      8
 .global     uefi_cr3

@@ -123,11 +123,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     }
     x86_64::instructions::interrupts::enable();
 
-    println!("VMM boot OK!");
-
-    // loop {
-    //     x86_64::instructions::hlt();
-    // }
+    halt("VMM boot OK!");
 
     Status::SUCCESS
 }

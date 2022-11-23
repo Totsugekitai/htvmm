@@ -33,16 +33,49 @@ pub trait Cpu {
     unsafe fn init_as_bsp(&mut self);
 }
 
-pub struct CpuError {
-    kind: CpuErrorKind,
+pub enum CpuError {
+    NotSupported,
+    VmxRelated,
 }
 
-impl CpuError {
-    pub fn new(kind: CpuErrorKind) -> Self {
-        Self { kind }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Tr(u64);
+
+impl Tr {
+    pub fn get_reg() -> Self {
+        let mut tr: u64;
+        unsafe {
+            asm!("sub rsp, 8; str [rsp]; pop {}", out(reg) tr);
+        }
+        Self(tr)
+    }
+
+    pub fn as_u64(&self) -> u64 {
+        self.0
     }
 }
 
-pub enum CpuErrorKind {
-    NotSupported,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Gdtr {
+    limit: u16,
+    base: u64,
+}
+
+impl Gdtr {
+    pub fn get_reg() -> Self {
+        let mut base: u64;
+        let mut limit: u16;
+        unsafe {
+            asm!("sub rsp, 16; sgdt [rsp]; mov [rsp], dx; mov [rsp + 2], rcx; add rsp, 16", out("dx") limit, out("rcx") base);
+        }
+        Self { limit, base }
+    }
+
+    pub fn base(&self) -> u64 {
+        self.base
+    }
+
+    pub fn limit(&self) -> u16 {
+        self.limit
+    }
 }
