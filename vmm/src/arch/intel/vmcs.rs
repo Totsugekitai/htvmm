@@ -1,19 +1,22 @@
 use crate::{
     arch::intel::vmx::{vmclear, vmptrld},
-    cpu::{Gdtr, Tr},
+    cpu::{Ldtr, SegmentDescriptor, Tr},
     BOOT_ARGS,
 };
 use alloc::alloc::alloc;
 use core::{alloc::Layout, ptr, slice};
 use x86_64::{
+    instructions::tables::{sgdt, sidt},
     registers::{
+        control::{Cr0, Cr3, Cr4},
+        debug::Dr7,
         model_specific::Msr,
         segmentation::{Segment, CS, DS, ES, FS, GS, SS},
     },
     PhysAddr,
 };
 
-use super::vmx::vmwrite;
+use super::vmx::{vmwrite, vmwrite64};
 
 pub struct VmcsRegion(*mut u8);
 
@@ -56,80 +59,208 @@ impl VmcsRegion {
         }
     }
 
-    fn write(&mut self, field: VmcsField, val: u64) {
+    fn write(&mut self, field: VmcsField, val: u32) {
         unsafe {
             vmwrite(field, val);
+        }
+    }
+
+    fn write64(&mut self, field: VmcsField, val: u64) {
+        unsafe {
+            vmwrite64(field, val);
         }
     }
 
     pub fn setup(&mut self) {
         self.setup_guest_state_area();
         self.setup_host_state_area();
-        self.setup_vm_execution_control_fields();
-        self.setup_vm_exit_control_fields();
-        self.setup_vm_entry_control_fields();
-        self.setup_vm_exit_infomation_fields();
+        self.setup_vm_control_fields();
     }
 
     fn setup_guest_state_area(&mut self) {
-        let debugctl = unsafe { Msr::new(0x1d9).read() };
-        let debugctl_low = debugctl & 0xffff_ffff;
-        let debugctl_high = (debugctl >> 32) & 0xffff_ffff;
-        self.write(VmcsField::GuestIa32Debugctl, debugctl_low);
-        self.write(VmcsField::GuestIa32DebugctlHigh, debugctl_high);
-
-        self.write(VmcsField::VmcsLinkPointer, !0u64);
-    }
-
-    fn setup_host_state_area(&mut self) {
+        // 16 bit guest state fields
         let cs = CS::get_reg();
         let ds = DS::get_reg();
         let es = ES::get_reg();
         let fs = FS::get_reg();
         let gs = GS::get_reg();
         let ss = SS::get_reg();
-        self.write(VmcsField::HostCsSelector, cs.0 as u64);
-        self.write(VmcsField::HostDsSelector, ds.0 as u64);
-        self.write(VmcsField::HostEsSelector, es.0 as u64);
-        self.write(VmcsField::HostFsSelector, fs.0 as u64);
-        self.write(VmcsField::HostGsSelector, gs.0 as u64);
-        self.write(VmcsField::HostSsSelector, ss.0 as u64);
-
-        let gdtr = Gdtr::get_reg();
+        let ldtr = Ldtr::get_reg();
         let tr = Tr::get_reg();
-        self.write(VmcsField::HostTrSelector, tr.as_u64());
-        self.write(VmcsField::HostGdtrBase, gdtr.base());
+        self.write(VmcsField::GuestCsSelector, cs.0 as u32);
+        self.write(VmcsField::GuestDsSelector, ds.0 as u32);
+        self.write(VmcsField::GuestEsSelector, es.0 as u32);
+        self.write(VmcsField::GuestFsSelector, fs.0 as u32);
+        self.write(VmcsField::GuestGsSelector, gs.0 as u32);
+        self.write(VmcsField::GuestSsSelector, ss.0 as u32);
+        self.write(VmcsField::GuestLdtrSelector, ldtr.0 as u32);
+        self.write(VmcsField::GuestTrSelector, tr.0 as u32);
+
+        // 32 bit guest state fields
+        let cs_limit = SegmentDescriptor::limit(&cs);
+        let ds_limit = SegmentDescriptor::limit(&ds);
+        let es_limit = SegmentDescriptor::limit(&es);
+        let fs_limit = SegmentDescriptor::limit(&fs);
+        let gs_limit = SegmentDescriptor::limit(&gs);
+        let ss_limit = SegmentDescriptor::limit(&ss);
+        let ldtr_limit = SegmentDescriptor::limit(&ldtr);
+        let tr_limit = SegmentDescriptor::limit(&tr);
+        let cs_rpl = cs.rpl();
+        let ds_rpl = ds.rpl();
+        let es_rpl = es.rpl();
+        let fs_rpl = fs.rpl();
+        let gs_rpl = gs.rpl();
+        let ss_rpl = ss.rpl();
+        let ldtr_rpl = ldtr.rpl();
+        let tr_rpl = tr.rpl();
+        let gdtr = sgdt();
+        let idtr = sidt();
+        let gdtr_limit = gdtr.limit;
+        let idtr_limit = idtr.limit;
+        let sysenter_cs = unsafe { Msr::new(0x174).read() & 0xffff_ffff } as u32;
+        self.write(VmcsField::GuestCsLimit, cs_limit);
+        self.write(VmcsField::GuestDsLimit, ds_limit);
+        self.write(VmcsField::GuestEsLimit, es_limit);
+        self.write(VmcsField::GuestFsLimit, fs_limit);
+        self.write(VmcsField::GuestGsLimit, gs_limit);
+        self.write(VmcsField::GuestSsLimit, ss_limit);
+        self.write(VmcsField::GuestLdtrLimit, ldtr_limit);
+        self.write(VmcsField::GuestTrLimit, tr_limit);
+        self.write(VmcsField::GuestGdtrLimit, gdtr_limit as u32);
+        self.write(VmcsField::GuestIdtrLimit, idtr_limit as u32);
+        self.write(VmcsField::GuestCsAccessRights, cs_rpl as u32);
+        self.write(VmcsField::GuestDsAccessRights, ds_rpl as u32);
+        self.write(VmcsField::GuestEsAccessRights, es_rpl as u32);
+        self.write(VmcsField::GuestFsAccessRights, fs_rpl as u32);
+        self.write(VmcsField::GuestGsAccessRights, gs_rpl as u32);
+        self.write(VmcsField::GuestSsAccessRights, ss_rpl as u32);
+        self.write(VmcsField::GuestLdtrAccessRights, ldtr_rpl as u32);
+        self.write(VmcsField::GuestTrAccessRights, tr_rpl as u32);
+        self.write(VmcsField::GuestInterruptibilityState, 0u32);
+        self.write(VmcsField::GuestActivityState, 0u32);
+        self.write(VmcsField::GuestIa32SysenterCs, sysenter_cs);
+
+        // 64 bit guest state fields
+        self.write64(VmcsField::VmcsLinkPointer, !0u64);
+        self.write64(VmcsField::GuestIa32Debugctl, 0u64);
+        self.write64(VmcsField::GuestIa32Efer, 0u64);
+
+        // natural width guest state fields
+        let cr0 = Cr0::read_raw();
+        let cr3_tuple = Cr3::read_raw();
+        let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
+        let cr4 = Cr4::read_raw();
+        let cs_base = SegmentDescriptor::base(&cs);
+        let ds_base = SegmentDescriptor::base(&ds);
+        let es_base = SegmentDescriptor::base(&es);
+        let fs_base = SegmentDescriptor::base(&fs);
+        let gs_base = SegmentDescriptor::base(&gs);
+        let ss_base = SegmentDescriptor::base(&ss);
+        let ldtr_base = SegmentDescriptor::base(&ldtr);
+        let tr_base = SegmentDescriptor::base(&tr);
+        let gdtr_base = gdtr.base.as_u64() as u32;
+        let idtr_base = idtr.base.as_u64() as u32;
+        let dr7 = Dr7::read_raw() as u32;
+        self.write64(VmcsField::GuestCr0, cr0);
+        self.write64(VmcsField::GuestCr3, cr3);
+        self.write64(VmcsField::GuestCr4, cr4);
+        self.write(VmcsField::GuestCsBase, cs_base);
+        self.write(VmcsField::GuestDsBase, ds_base);
+        self.write(VmcsField::GuestEsBase, es_base);
+        self.write(VmcsField::GuestFsBase, fs_base);
+        self.write(VmcsField::GuestGsBase, gs_base);
+        self.write(VmcsField::GuestSsBase, ss_base);
+        self.write(VmcsField::GuestLdtrBase, ldtr_base);
+        self.write(VmcsField::GuestTrBase, tr_base);
+        self.write(VmcsField::GuestGdtrBase, gdtr_base);
+        self.write(VmcsField::GuestIdtrBase, idtr_base);
+        self.write(VmcsField::GuestDr7, dr7);
     }
 
-    fn setup_vm_execution_control_fields(&mut self) {
-        self.write(VmcsField::TscOffset, 0);
-        self.write(VmcsField::TscOffsetHigh, 0);
+    fn setup_host_state_area(&mut self) {
+        // 16 bit host state fields
+        let cs = CS::get_reg();
+        let ds = DS::get_reg();
+        let es = ES::get_reg();
+        let fs = FS::get_reg();
+        let gs = GS::get_reg();
+        let ss = SS::get_reg();
+        let tr = Tr::get_reg();
+        self.write(VmcsField::HostCsSelector, cs.0 as u32);
+        self.write(VmcsField::HostDsSelector, ds.0 as u32);
+        self.write(VmcsField::HostEsSelector, es.0 as u32);
+        self.write(VmcsField::HostFsSelector, fs.0 as u32);
+        self.write(VmcsField::HostGsSelector, gs.0 as u32);
+        self.write(VmcsField::HostSsSelector, ss.0 as u32);
+        self.write(VmcsField::HostTrSelector, tr.0 as u32);
+
+        // 32 bit host state fields
+        let sysenter_cs = unsafe { Msr::new(0x174).read() & 0xffff_ffff } as u32;
+        self.write(VmcsField::HostIa32SysenterCs, sysenter_cs);
+
+        // native width host state fields
+        let gdtr = sgdt();
+        self.write64(VmcsField::HostGdtrBase, gdtr.base.as_u64());
+    }
+
+    fn setup_vm_control_fields(&mut self) {
+        let pin_based_controls = unsafe { Msr::new(0x481).read() };
+        let pin_based_controls_or = (pin_based_controls & 0xffff_ffff) as u32;
+        let pin_based_controls_and = ((pin_based_controls >> 32) & 0xffff_ffff) as u32;
+        let proc_based_controls = unsafe { Msr::new(0x482).read() };
+        let proc_based_controls_or = (proc_based_controls & 0xffff_ffff) as u32;
+        let proc_based_controls_and = ((proc_based_controls >> 32) & 0xffff_ffff) as u32;
+        let proc_based_controls2 = unsafe { Msr::new(0x48b).read() };
+        let proc_based_controls2_or = (proc_based_controls2 & 0xffff_ffff) as u32;
+        let proc_based_controls2_and = ((proc_based_controls2 >> 32) & 0xffff_ffff) as u32;
+        self.write(
+            VmcsField::PinBasedVmExecControls,
+            (0 | pin_based_controls_or) & pin_based_controls_and,
+        );
+        self.write(
+            VmcsField::ProcBasedVmExecControls,
+            (0 | proc_based_controls_or) & proc_based_controls_and,
+        );
+        self.write(
+            VmcsField::ProcBasedVmExecControls2,
+            (0 | proc_based_controls2_or) & proc_based_controls2_and,
+        );
+
+        self.write(VmcsField::ExceptionBitmap, 0u32);
+
+        self.write64(VmcsField::TscOffset, 0u64);
 
         self.write(VmcsField::PageFaultErrorCodeMask, 0);
         self.write(VmcsField::PageFaultErrorCodeMatch, 0);
-    }
 
-    fn setup_vm_exit_control_fields(&mut self) {
         self.write(VmcsField::VmExitMsrLoadCount, 0);
         self.write(VmcsField::VmExitMsrStoreCount, 0);
-    }
 
-    fn setup_vm_entry_control_fields(&mut self) {
         self.write(VmcsField::VmEntryMsrLoadCount, 0);
         self.write(VmcsField::VmEntryIntrInfoField, 0);
-    }
 
-    fn setup_vm_exit_infomation_fields(&mut self) {}
+        // natural width control fields
+        let cr0 = Cr0::read_raw();
+        let cr4 = Cr4::read_raw();
+        self.write64(VmcsField::Cr0GuestHostMask, 0);
+        self.write64(VmcsField::Cr4GuestHostMask, 0);
+        self.write64(VmcsField::Cr0ReadShadow, cr0);
+        self.write64(VmcsField::Cr4ReadShadow, cr4);
+        self.write64(VmcsField::Cr3TargetValue0, 0);
+        self.write64(VmcsField::Cr3TargetValue1, 0);
+        self.write64(VmcsField::Cr3TargetValue2, 0);
+        self.write64(VmcsField::Cr3TargetValue3, 0);
+    }
 }
 
 #[repr(u32)]
 pub enum VmcsField {
     GuestEsSelector = 0x00000800,
     GuestCsSelector = 0x00000802,
-    GuestGsSelector = 0x00000804,
+    GuestSsSelector = 0x00000804,
     GuestDsSelector = 0x00000806,
     GuestFsSelector = 0x00000808,
-    GsSelector = 0x0000080a,
+    GuestGsSelector = 0x0000080a,
     GuestLdtrSelector = 0x0000080c,
     GuestTrSelector = 0x0000080e,
     HostEsSelector = 0x00000c00,
@@ -167,8 +298,9 @@ pub enum VmcsField {
     VmcsLinkPointerHigh = 0x00002801,
     GuestIa32Debugctl = 0x00002802,
     GuestIa32DebugctlHigh = 0x00002803,
-    PinBasedVmExecControl = 0x00004000,
-    CpuBasedVmExecControl = 0x00004002,
+    GuestIa32Efer = 0x00002806,
+    PinBasedVmExecControls = 0x00004000,
+    ProcBasedVmExecControls = 0x00004002,
     ExceptionBitmap = 0x00004004,
     PageFaultErrorCodeMask = 0x00004006,
     PageFaultErrorCodeMatch = 0x00004008,
@@ -182,7 +314,7 @@ pub enum VmcsField {
     VmEntryExceptionErrorCode = 0x00004018,
     VmEntryInstructionLen = 0x0000401a,
     TprThreshold = 0x0000401c,
-    SecondaryVmExecControl = 0x0000401e,
+    ProcBasedVmExecControls2 = 0x0000401e,
     VmInstructionError = 0x00004400,
     VmExitReason = 0x00004402,
     VmExitIntrInfo = 0x00004404,
@@ -201,18 +333,18 @@ pub enum VmcsField {
     GuestTrLimit = 0x0000480e,
     GuestGdtrLimit = 0x00004810,
     GuestIdtrLimit = 0x00004812,
-    GuestEsArBytes = 0x00004814,
-    GuestCsArBytes = 0x00004816,
-    GuestSsArBytes = 0x00004818,
-    GuestDsArBytes = 0x0000481a,
-    GuestFsArBytes = 0x0000481c,
-    GuestGsArBytes = 0x0000481e,
-    GuestLdtrArBytes = 0x00004820,
-    GuestTrArBytes = 0x00004822,
-    GuestInterruptibilityInfo = 0x00004824,
+    GuestEsAccessRights = 0x00004814,
+    GuestCsAccessRights = 0x00004816,
+    GuestSsAccessRights = 0x00004818,
+    GuestDsAccessRights = 0x0000481a,
+    GuestFsAccessRights = 0x0000481c,
+    GuestGsAccessRights = 0x0000481e,
+    GuestLdtrAccessRights = 0x00004820,
+    GuestTrAccessRights = 0x00004822,
+    GuestInterruptibilityState = 0x00004824,
     GuestActivityState = 0x00004826,
     GuestSmBase = 0x00004828,
-    GuestSysenterCs = 0x0000482A,
+    GuestIa32SysenterCs = 0x0000482A,
     HostIa32SysenterCs = 0x00004c00,
     Cr0GuestHostMask = 0x00006000,
     Cr4GuestHostMask = 0x00006002,

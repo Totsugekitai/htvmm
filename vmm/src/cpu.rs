@@ -1,4 +1,7 @@
 use core::arch::asm;
+use x86_64::{
+    instructions::tables::sgdt, registers::segmentation::Segment, structures::gdt::SegmentSelector,
+};
 
 #[derive(Debug, Clone)]
 pub struct Cpuid {
@@ -39,43 +42,62 @@ pub enum CpuError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Tr(u64);
+pub struct Ldtr;
 
-impl Tr {
-    pub fn get_reg() -> Self {
-        let mut tr: u64;
+impl Segment for Ldtr {
+    fn get_reg() -> SegmentSelector {
+        let mut ldtr: u16 = 0;
         unsafe {
-            asm!("sub rsp, 8; str [rsp]; pop {}", out(reg) tr);
+            asm!("sldt [{}]", in(reg) &mut ldtr, options(nostack, preserves_flags));
         }
-        Self(tr)
+        SegmentSelector(ldtr)
     }
 
-    pub fn as_u64(&self) -> u64 {
-        self.0
+    unsafe fn set_reg(sel: SegmentSelector) {
+        asm!("lldt [{}]", in(reg) &sel.0, options(readonly, nostack, preserves_flags));
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Gdtr {
-    limit: u16,
-    base: u64,
+pub struct Tr;
+
+impl Segment for Tr {
+    fn get_reg() -> SegmentSelector {
+        let mut tr: u16 = 0;
+        unsafe {
+            asm!("str [{}]", in(reg) &mut tr, options(nostack, preserves_flags));
+        }
+        SegmentSelector(tr)
+    }
+
+    unsafe fn set_reg(sel: SegmentSelector) {
+        asm!("ltr [{}]", in(reg) &sel.0, options(readonly, nostack, preserves_flags));
+    }
 }
 
-impl Gdtr {
-    pub fn get_reg() -> Self {
-        let mut base: u64;
-        let mut limit: u16;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SegmentDescriptor;
+
+impl SegmentDescriptor {
+    pub fn base(sel: &SegmentSelector) -> u32 {
+        let i = sel.index() as usize;
+        let gdt = sgdt();
+        let gdt_limit = gdt.limit;
+        let gdt = unsafe {
+            core::slice::from_raw_parts(gdt.base.as_ptr() as *const u64, gdt_limit as usize)
+        };
+        let segment_descriptor = gdt[i];
+
+        ((segment_descriptor & (0xff << (32 + 24))) as u32)
+            | ((segment_descriptor & (0xff << 32)) as u32)
+            | ((segment_descriptor & (0xffff << 16)) as u32)
+    }
+
+    pub fn limit(sel: &SegmentSelector) -> u32 {
+        let mut limit: u32 = 0;
         unsafe {
-            asm!("sub rsp, 16; sgdt [rsp]; mov [rsp], dx; mov [rsp + 2], rcx; add rsp, 16", out("dx") limit, out("rcx") base);
+            asm!("lsl {}, [{}]", in(reg) &mut limit, in(reg) &sel.0, options(nostack, preserves_flags));
         }
-        Self { limit, base }
-    }
-
-    pub fn base(&self) -> u64 {
-        self.base
-    }
-
-    pub fn limit(&self) -> u16 {
-        self.limit
+        limit
     }
 }

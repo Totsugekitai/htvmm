@@ -1,4 +1,4 @@
-use crate::{MAX_ADDRESS, VMM_AREA_SIZE};
+use crate::MAX_ADDRESS;
 use uefi::{
     prelude::BootServices,
     table::boot::{AllocateType, MemoryType},

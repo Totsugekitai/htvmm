@@ -125,7 +125,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     halt("VMM boot OK!");
 
-    Status::SUCCESS
+    // Status::SUCCESS
 }
 
 fn halt(error_msg: &str) -> ! {
