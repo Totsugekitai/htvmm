@@ -1,5 +1,5 @@
 use crate::{
-    arch::intel::vmx::{vmclear, vmptrld, vmwrite},
+    arch::intel::vmx::{vmclear, vmptrld, vmread, vmwrite},
     cpu::{Ldtr, SegmentDescriptor, Tr},
     BOOT_ARGS,
 };
@@ -8,14 +8,18 @@ use core::{alloc::Layout, ptr, slice};
 use x86_64::{
     instructions::tables::{sgdt, sidt},
     registers::{
-        control::{Cr0, Cr3, Cr4},
+        control::{Cr0, Cr3, Cr4, Cr4Flags},
         debug::Dr7,
         model_specific::Msr,
         rflags,
-        segmentation::{Segment, CS, DS, ES, FS, GS, SS},
+        segmentation::{Segment, Segment64, CS, DS, ES, FS, GS, SS},
     },
     PhysAddr,
 };
+
+extern "C" {
+    static entry_ret: u8;
+}
 
 pub struct VmcsRegion(*mut u8);
 
@@ -56,6 +60,10 @@ impl VmcsRegion {
         unsafe {
             vmptrld(self);
         }
+    }
+
+    pub fn read(&self, field: VmcsField) -> u64 {
+        unsafe { vmread(field) }
     }
 
     fn write(&mut self, field: VmcsField, val: u64) {
@@ -157,6 +165,7 @@ impl VmcsRegion {
         let rflags = rflags::read_raw();
         let sysenter_esp = unsafe { Msr::new(0x175).read() };
         let sysenter_eip = unsafe { Msr::new(0x176).read() };
+        let rip = unsafe { entry_ret as *const u64 as u64 };
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
         self.write(VmcsField::GuestCr4, cr4);
@@ -172,7 +181,7 @@ impl VmcsRegion {
         self.write(VmcsField::GuestIdtrBase, idtr_base);
         self.write(VmcsField::GuestDr7, dr7);
         self.write(VmcsField::GuestRsp, 0xdeadbeef);
-        self.write(VmcsField::GuestRip, 0xcafebabe);
+        self.write(VmcsField::GuestRip, rip);
         self.write(VmcsField::GuestRflags, rflags);
         self.write(VmcsField::GuestPendingDbgExceptions, 0);
         self.write(VmcsField::GuestSysenterEsp, sysenter_esp);
@@ -201,33 +210,51 @@ impl VmcsRegion {
         self.write(VmcsField::HostIa32SysenterCs, sysenter_cs);
 
         // native width host state fields
-        let cr0 = Cr0::read_raw();
         let cr3_tuple = Cr3::read_raw();
         let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
+        let cr4 = Cr4::read() | Cr4Flags::FSGSBASE | Cr4Flags::PHYSICAL_ADDRESS_EXTENSION; // If the “host address-space size” VM-exit control is 1, Bit 5 of the CR4 field (corresponding to CR4.PAE) is 1.
+        unsafe {
+            Cr4::write(cr4);
+        }
         let cr4 = Cr4::read_raw();
+        // If bit 23 in the CR4 field (corresponding to CET) is 1, bit 16 in the CR0 field (WP) must also be 1.
+        if (cr4 >> 23) & 1 == 1 {
+            let cr0 = Cr0::read_raw();
+            unsafe {
+                Cr0::write_raw(cr0 | (1 << 16));
+            }
+        }
+        let cr0 = Cr0::read_raw();
         let gdtr = sgdt();
         let idtr = sidt();
-        let fs_base = SegmentDescriptor::base(&fs);
-        let gs_base = SegmentDescriptor::base(&gs);
+        let fs_base = FS::read_base().as_u64();
+        let gs_base = GS::read_base().as_u64();
         let tr_base = SegmentDescriptor::base(&tr);
+        // unsafe {
+        //     use core::arch::asm;
+        //     asm!("mov r15, {}; hlt", in(reg) tr_base, options(readonly, nostack, preserves_flags));
+        // };
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let sysenter_esp = unsafe { Msr::new(0x175).read() };
         let sysenter_eip = unsafe { Msr::new(0x176).read() };
         let efer = unsafe { Msr::new(0xc0000080).read() };
+        let pat = unsafe { Msr::new(0x277).read() };
+        let host_rip = unsafe { core::mem::transmute(&(x86_64::instructions::hlt as fn())) };
         self.write(VmcsField::HostCr0, cr0);
         self.write(VmcsField::HostCr3, cr3);
         self.write(VmcsField::HostCr4, cr4);
-        self.write(VmcsField::HostFsBase, fs_base as u64);
-        self.write(VmcsField::HostGsBase, gs_base as u64);
-        self.write(VmcsField::HostTrBase, tr_base as u64);
+        self.write(VmcsField::HostFsBase, fs_base);
+        self.write(VmcsField::HostGsBase, gs_base);
+        self.write(VmcsField::HostTrBase, tr_base);
         self.write(VmcsField::HostGdtrBase, gdtr_base);
         self.write(VmcsField::HostIdtrBase, idtr_base);
         self.write(VmcsField::HostIa32SysenterEsp, sysenter_esp);
         self.write(VmcsField::HostIa32SysenterEip, sysenter_eip);
         self.write(VmcsField::HostRsp, 0xdeadbeef);
-        self.write(VmcsField::HostRip, 0xcafebabe);
+        self.write(VmcsField::HostRip, host_rip);
         self.write(VmcsField::HostIa32Efer, efer);
+        self.write(VmcsField::HostIa32Pat, pat);
     }
 
     fn setup_vm_control_fields(&mut self) {
@@ -265,7 +292,7 @@ impl VmcsRegion {
         self.write(VmcsField::Cr3TargetCount, 0);
         self.write(
             VmcsField::VmExitControls,
-            ((0 | exit_controls_or) & exit_controls_and) as u64,
+            (((0 | exit_controls_or) & exit_controls_and) as u64) | (1 << 9), // host address space size = 1
         );
         self.write(VmcsField::VmExitMsrStoreCount, 0);
         self.write(VmcsField::VmExitMsrLoadCount, 0);
@@ -347,6 +374,7 @@ pub enum VmcsField {
     GuestIa32Debugctl = 0x00002802,
     GuestIa32DebugctlHigh = 0x00002803,
     GuestIa32Efer = 0x00002806,
+    HostIa32Pat = 0x00002c00,
     HostIa32Efer = 0x00002c02,
     HostIa32EferHigh = 0x00002c03,
     PinBasedVmExecControls = 0x00004000,

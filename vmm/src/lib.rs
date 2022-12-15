@@ -30,6 +30,7 @@ pub unsafe extern "sysv64" fn vmm_main(boot_args: *const BootArgs) {
         panic!();
     }
     intel.init_as_bsp();
+    intel.run_vm();
 }
 
 #[panic_handler]

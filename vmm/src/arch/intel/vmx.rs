@@ -72,15 +72,44 @@ unsafe fn asm_vmptrld(phys_addr: PhysAddr) -> Result<(), VmxError> {
     check_vmx_error(flags)
 }
 
-pub unsafe fn vmwrite(field: VmcsField, val: u64) {
-    if let Err(_e) = asm_vmwrite(field, val) {
+pub unsafe fn vmread(field: VmcsField) -> u64 {
+    if let Ok(val) = asm_vmread(field) {
+        val
+    } else {
         panic!();
     }
 }
 
-unsafe fn asm_vmwrite(field: VmcsField, val: u64) -> Result<(), VmxError> {
+unsafe fn asm_vmread(field: VmcsField) -> Result<u64, VmxError> {
     let mut flags;
-    asm!("vmwrite rdi, rsi; pushfq; pop rax", in("rdi") field as u32, in("rsi") val, out("rax") flags);
+    let mut value;
+    asm!("vmread rdi, rsi; pushfq; pop rax", in("rsi") field as u32, out("rdi") value, out("rax") flags);
+    if let Err(e) = check_vmx_error(flags) {
+        Err(e)
+    } else {
+        Ok(value)
+    }
+}
+
+pub unsafe fn vmwrite(field: VmcsField, value: u64) {
+    if let Err(_e) = asm_vmwrite(field, value) {
+        panic!();
+    }
+}
+
+unsafe fn asm_vmwrite(field: VmcsField, value: u64) -> Result<(), VmxError> {
+    let mut flags;
+    asm!("vmwrite rdi, rsi; pushfq; pop rax", in("rdi") field as u32, in("rsi") value, out("rax") flags);
+    check_vmx_error(flags)
+}
+
+pub unsafe fn vmlaunch() -> Result<(), VmxError> {
+    asm_vmlaunch()
+}
+
+unsafe fn asm_vmlaunch() -> Result<(), VmxError> {
+    let mut flags;
+    asm!("vmlaunch; pushfq; pop rax", out("rax") flags);
     check_vmx_error(flags)
 }
 
@@ -91,7 +120,7 @@ fn check_vmx_error(flags: u64) -> Result<(), VmxError> {
     if cf {
         Err(VmxError::InvalidPointer)
     } else if zf {
-        Err(VmxError::VmInstructionError(0)) // FIXME
+        Err(VmxError::VmInstructionError)
     } else {
         Ok(())
     }
@@ -127,5 +156,5 @@ impl VmxonRegion {
 
 pub enum VmxError {
     InvalidPointer,
-    VmInstructionError(u8),
+    VmInstructionError,
 }

@@ -105,6 +105,20 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     println!("ENTER VMM: 0x{:x}", VMM_ENTRY_VADDR);
 
+    // unsafe {
+    //     use core::arch::asm;
+    //     use x86_64::instructions::tables::sgdt;
+    //     let pgdt = sgdt();
+    //     let gdt_limit = pgdt.limit;
+    //     let gdt_base = pgdt.base.as_ptr() as *const u64;
+    //     let gdt = core::slice::from_raw_parts(gdt_base, (gdt_limit / 8) as usize);
+    //     let tr: u16;
+    //     asm!("str {0:x}", out(reg) tr, options(nostack, nomem, preserves_flags));
+    //     let i = (tr >> 4) as usize;
+    //     let tss_descriptor = gdt[i];
+    //     println!("TSS: {:x}", tss_descriptor);
+    // }
+
     let (vmm_pml4_table, cr3_flags) =
         crate::paging::create_page_table(PhysAddr::new(entry_point), boot_services);
 

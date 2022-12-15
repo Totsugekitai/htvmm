@@ -3,10 +3,14 @@
 
 .global     entry, entry_ret
 entry:                                  # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
+    call    set_vmm_tss64
     call    save_uefi_regs
     call    init_vmm_regs
     lea     vmm_gdtr(%rip), %rax
     lgdt    (%rax)
+    mov     $8, %rax
+    shl     $3, %rax
+    ltr     %ax
     mov     %rsp, uefi_rsp(%rip)
     lea     vmm_stack_end(%rip), %rax
     mov     %rax, %rsp
@@ -124,7 +128,7 @@ restore_uefi_regs:
 init_vmm_regs:
     push    %rax
     push    %rbx
-    mov     $0x40, %ax
+    mov     $0x50, %ax
     mov     %ax, vmm_gdtr(%rip)
     lea     vmm_gdtr(%rip), %rax
     lea     vmm_gdt(%rip), %rbx
@@ -140,9 +144,66 @@ init_vmm_regs:
     pop     %rax
     ret
 
-# .global     call_uefi_fn
-# call_uefi_fn:                           # pub extern "sysv64" unsafe fn call_uefi_fn(fn_ptr_u64: u64, arg: u64);
-    
+.global     copy_uefi_tss64
+copy_uefi_tss64:
+    push    %rax
+    push    %rcx
+    push    %rdx
+    push    %rdi
+    push    %rsi
+    str     %rax
+    shr     $3, %rax                    # rax = TR.index
+    sub     $10, %rsp
+    sgdt    (%rsp)
+    mov     2(%rsp), %rcx               # rcx = GDTR.base
+    add     $10, %rsp
+    mov     8(%rcx, %rax), %rdx         # rdx = TSS.base63_32
+    shl     $32, %rdx
+    mov     (%rcx, %rax), %rax          # rax = TSS(LOW)
+    mov     %rax, %rcx
+    shr     $32, %rcx
+    and     $0xff000000, %ecx
+    shr     $16, %rax
+    and     $0x00ffffff, %rax
+    or      %rcx, %rax
+    or      %rax, %rdx                  # rdx = TSS
+    lea     vmm_tss64(%rip), %rax
+    mov     %rdx, %rsi
+    mov     %rax, %rdi
+    mov     $104, %rcx
+    cld
+    rep movsb
+    push    %rsi
+    push    %rdi
+    pop     %rdx
+    pop     %rcx
+    pop     %rax
+    ret
+
+.global     set_vmm_tss64
+set_vmm_tss64:
+    push    %rax
+    push    %rcx
+    push    %rdx
+    xor     %rcx, %rcx
+    lea     vmm_tss64(%rip), %rax
+    lea     vmm_gdt(%rip), %rdx
+    mov     $104, %cx
+    mov     %cx, 0x40(%rdx)             # limit
+    mov     %ax, %cx
+    mov     %cx, 0x42(%rdx)             # base address 15:00
+    shr     $16, %rax
+    mov     %ax, %cx
+    mov     %cl, 0x44(%rdx)             # base address 23:16
+    mov     %ch, 0x47(%rdx)             # base address 31:24
+    shr     $16, %rax
+    mov     %eax, %ecx
+    mov     %ecx, 0x48(%rdx)            # base address 63:32
+    movb    $0x89, 0x45(%rdx)           # TSS-available
+    pop     %rdx
+    pop     %rcx
+    pop     %rax
+    ret
 
 # ===== UEFI special registers =====
 .align      2
@@ -257,7 +318,7 @@ vmm_gdtr:
 .align      16
 .global     vmm_gdt
 vmm_gdt:
-    .quad   0
+    .quad   0x0000000000000000          # NULL
     .quad   0x00CF9B000000FFFF          # 0x08 CODE32, DPL=0
     .quad   0x00CF93000000FFFF          # 0x10 DATA32, DPL=0
     .quad   0x00AF9B000000FFFF          # 0x18 CODE64, DPL=0
@@ -265,6 +326,27 @@ vmm_gdt:
     .quad   0x00009B000000FFFF          # 0x28 CODE16, DPL=0
     .quad   0x000093000000FFFF          # 0x30 DATA16, DPL=0
     .quad   0x0000930B8000FFFF          # 0x38 DATA16, DPL=0
+    .quad   0x0000890000000000          # 0x40 TSS64(LOW)
+    .quad   0x0000000000000000          # 0x48 TSS64(HIGH)
+
+.align      16
+.global     vmm_tss64
+vmm_tss64:
+    .word   0x00000000                  # reserved
+    .quad   0x0000000000000000          # RSP0
+    .quad   0x0000000000000000          # RSP1
+    .quad   0x0000000000000000          # RSP2
+    .quad   0x0000000000000000          # reserved
+    .quad   0x0000000000000000          # IST1
+    .quad   0x0000000000000000          # IST2
+    .quad   0x0000000000000000          # IST3
+    .quad   0x0000000000000000          # IST4
+    .quad   0x0000000000000000          # IST5
+    .quad   0x0000000000000000          # IST6
+    .quad   0x0000000000000000          # IST7
+    .quad   0x0000000000000000          # reserved
+    .short  0x0000                      # reserved
+    .short  0xffff                      # iomap base
 # === VMM special registers end ===
 
 # ===== VMM stack =====

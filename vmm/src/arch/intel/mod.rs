@@ -2,8 +2,8 @@ mod vmcs;
 mod vmx;
 
 use crate::cpu::{Cpu, CpuError};
-use vmcs::VmcsRegion;
-use vmx::{vmxon, VmxonRegion};
+use vmcs::{VmcsField, VmcsRegion};
+use vmx::{vmlaunch, vmxon, VmxError, VmxonRegion};
 
 pub struct IntelCpu {
     vmxon_region: VmxonRegion,
@@ -53,9 +53,24 @@ impl Cpu for IntelCpu {
         Ok(())
     }
 
-    unsafe fn init_as_bsp(&mut self) {
+    fn init_as_bsp(&mut self) {
         self.vmcs_region.clear();
         self.vmcs_region.load();
         self.vmcs_region.setup();
+    }
+
+    fn run_vm(&mut self) {
+        unsafe {
+            if let Err(e) = vmlaunch() {
+                match e {
+                    VmxError::InvalidPointer => panic!(),
+                    VmxError::VmInstructionError => {
+                        let error_code = self.vmcs_region.read(VmcsField::VmInstructionError);
+                        use core::arch::asm;
+                        asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
+                    }
+                }
+            }
+        }
     }
 }
