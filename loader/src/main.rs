@@ -8,6 +8,7 @@ mod paging;
 extern crate alloc;
 
 use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE};
+use core::arch::asm;
 use goblin::elf;
 use uefi::{
     data_types::Align,
@@ -100,24 +101,8 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     };
 
     let entry_point = alloc_paddr + vmm_entry_offset;
-    let vmm_entry: extern "sysv64" fn(*const BootArgs) =
-        unsafe { core::mem::transmute(VMM_ENTRY_VADDR) };
 
     println!("ENTER VMM: 0x{:x}", VMM_ENTRY_VADDR);
-
-    // unsafe {
-    //     use core::arch::asm;
-    //     use x86_64::instructions::tables::sgdt;
-    //     let pgdt = sgdt();
-    //     let gdt_limit = pgdt.limit;
-    //     let gdt_base = pgdt.base.as_ptr() as *const u64;
-    //     let gdt = core::slice::from_raw_parts(gdt_base, (gdt_limit / 8) as usize);
-    //     let tr: u16;
-    //     asm!("str {0:x}", out(reg) tr, options(nostack, nomem, preserves_flags));
-    //     let i = (tr >> 4) as usize;
-    //     let tss_descriptor = gdt[i];
-    //     println!("TSS: {:x}", tss_descriptor);
-    // }
 
     let (vmm_pml4_table, cr3_flags) =
         crate::paging::create_page_table(PhysAddr::new(entry_point), boot_services);
@@ -130,9 +115,43 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         );
     }
 
-    vmm_entry(&boot_args as *const BootArgs); // enter VMM!!!
-
     unsafe {
+        asm!(
+            "push %rax",
+            "push %rbx",
+            "push %rcx",
+            "push %rdx",
+            "push %rdi",
+            "push %rsi",
+            "push %r8",
+            "push %r9",
+            "push %r10",
+            "push %r11",
+            "push %r12",
+            "push %r13",
+            "push %r14",
+            "push %r15",
+            "mov {boot_args}, %rdi",
+            "mov {vmm_entry}, %rax",
+            "call *%rax",
+            "pop %r15",
+            "pop %r14",
+            "pop %r13",
+            "pop %r12",
+            "pop %r11",
+            "pop %r10",
+            "pop %r9",
+            "pop %r8",
+            "pop %rsi",
+            "pop %rdi",
+            "pop %rdx",
+            "pop %rcx",
+            "pop %rbx",
+            "pop %rax",
+            boot_args = in(reg) &boot_args as *const BootArgs,
+            vmm_entry = in(reg) VMM_ENTRY_VADDR,
+            options(att_syntax)
+        );
         x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
     }
     x86_64::instructions::interrupts::enable();

@@ -11,21 +11,24 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     mov     $8, %rax
     shl     $3, %rax
     ltr     %ax
+    mov     $10, %rax
+    shl     $3, %rax
+    lldt    %ax
     mov     %rsp, uefi_rsp(%rip)
     lea     vmm_stack_end(%rip), %rax
     mov     %rax, %rsp
     lea     vmm_main(%rip), %rax
     mov     %rax, vmm_main_ljmp(%rip)
-    mov     $0x20, %rax                 # DATA64
-    mov     %eax, %ds
-    mov     %eax, %es
-    mov     %eax, %ss
-    xor     %rax, %rax
-    mov     %eax, %fs
-    mov     %eax, %gs
+    mov     $4, %ax                     # DATA64
+    shl     $3, %ax
+    mov     %ax, %ds
+    mov     %ax, %es
+    mov     %ax, %ss
+    mov     %ax, %fs
+    mov     %ax, %gs
     lea     vmm_main_ljmp(%rip), %rax
     .byte   0x48                        # REX.W prefix
-    lcall   *(%rax)
+    ljmpl   *(%rax)
 entry_ret:
     mov     uefi_rsp(%rip), %rsp
     call    restore_uefi_regs
@@ -128,7 +131,7 @@ restore_uefi_regs:
 init_vmm_regs:
     push    %rax
     push    %rbx
-    mov     $0x50, %ax
+    mov     $(vmm_gdt_end - vmm_gdt), %ax   # sizeof GDT
     mov     %ax, vmm_gdtr(%rip)
     lea     vmm_gdtr(%rip), %rax
     lea     vmm_gdt(%rip), %rbx
@@ -144,42 +147,6 @@ init_vmm_regs:
     pop     %rax
     ret
 
-.global     copy_uefi_tss64
-copy_uefi_tss64:
-    push    %rax
-    push    %rcx
-    push    %rdx
-    push    %rdi
-    push    %rsi
-    str     %rax
-    shr     $3, %rax                    # rax = TR.index
-    sub     $10, %rsp
-    sgdt    (%rsp)
-    mov     2(%rsp), %rcx               # rcx = GDTR.base
-    add     $10, %rsp
-    mov     8(%rcx, %rax), %rdx         # rdx = TSS.base63_32
-    shl     $32, %rdx
-    mov     (%rcx, %rax), %rax          # rax = TSS(LOW)
-    mov     %rax, %rcx
-    shr     $32, %rcx
-    and     $0xff000000, %ecx
-    shr     $16, %rax
-    and     $0x00ffffff, %rax
-    or      %rcx, %rax
-    or      %rax, %rdx                  # rdx = TSS
-    lea     vmm_tss64(%rip), %rax
-    mov     %rdx, %rsi
-    mov     %rax, %rdi
-    mov     $104, %rcx
-    cld
-    rep movsb
-    push    %rsi
-    push    %rdi
-    pop     %rdx
-    pop     %rcx
-    pop     %rax
-    ret
-
 .global     set_vmm_tss64
 set_vmm_tss64:
     push    %rax
@@ -188,8 +155,6 @@ set_vmm_tss64:
     xor     %rcx, %rcx
     lea     vmm_tss64(%rip), %rax
     lea     vmm_gdt(%rip), %rdx
-    mov     $104, %cx
-    mov     %cx, 0x40(%rdx)             # limit
     mov     %ax, %cx
     mov     %cx, 0x42(%rdx)             # base address 15:00
     shr     $16, %rax
@@ -199,7 +164,7 @@ set_vmm_tss64:
     shr     $16, %rax
     mov     %eax, %ecx
     mov     %ecx, 0x48(%rdx)            # base address 63:32
-    movb    $0x89, 0x45(%rdx)           # TSS-available
+    # movb    $0x89, 0x45(%rdx)           # TSS-available
     pop     %rdx
     pop     %rcx
     pop     %rax
@@ -316,7 +281,7 @@ vmm_gdtr:
     .quad   0
 
 .align      16
-.global     vmm_gdt
+.global     vmm_gdt, vmm_gdt_end
 vmm_gdt:
     .quad   0x0000000000000000          # NULL
     .quad   0x00CF9B000000FFFF          # 0x08 CODE32, DPL=0
@@ -326,8 +291,11 @@ vmm_gdt:
     .quad   0x00009B000000FFFF          # 0x28 CODE16, DPL=0
     .quad   0x000093000000FFFF          # 0x30 DATA16, DPL=0
     .quad   0x0000930B8000FFFF          # 0x38 DATA16, DPL=0
-    .quad   0x0000890000000000          # 0x40 TSS64(LOW)
+    .quad   0x000089000000FFFF          # 0x40 TSS64(LOW)
     .quad   0x0000000000000000          # 0x48 TSS64(HIGH)
+    .quad   0x000082000000FFFF          # 0x50 LDT(LOW)
+    .quad   0x0000000000000000          # 0x58 LDT(HIGH)
+vmm_gdt_end:
 
 .align      16
 .global     vmm_tss64

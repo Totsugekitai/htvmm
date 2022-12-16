@@ -98,53 +98,39 @@ impl VmcsRegion {
         self.write(VmcsField::GuestTrSelector, tr.0 as u64);
 
         // 32 bit guest state fields
-        let cs_limit = SegmentDescriptor::limit(&cs);
-        let ds_limit = SegmentDescriptor::limit(&ds);
-        let es_limit = SegmentDescriptor::limit(&es);
-        let fs_limit = SegmentDescriptor::limit(&fs);
-        let gs_limit = SegmentDescriptor::limit(&gs);
-        let ss_limit = SegmentDescriptor::limit(&ss);
-        let ldtr_limit = SegmentDescriptor::limit(&ldtr);
-        let tr_limit = SegmentDescriptor::limit(&tr);
-        let cs_rpl = cs.rpl();
-        let ds_rpl = ds.rpl();
-        let es_rpl = es.rpl();
-        let fs_rpl = fs.rpl();
-        let gs_rpl = gs.rpl();
-        let ss_rpl = ss.rpl();
-        let ldtr_rpl = ldtr.rpl();
-        let tr_rpl = tr.rpl();
         let gdtr = sgdt();
         let idtr = sidt();
         let gdtr_limit = gdtr.limit;
         let idtr_limit = idtr.limit;
         let sysenter_cs = unsafe { Msr::new(0x174).read() };
-        self.write(VmcsField::GuestCsLimit, cs_limit as u64);
-        self.write(VmcsField::GuestDsLimit, ds_limit as u64);
-        self.write(VmcsField::GuestEsLimit, es_limit as u64);
-        self.write(VmcsField::GuestFsLimit, fs_limit as u64);
-        self.write(VmcsField::GuestGsLimit, gs_limit as u64);
-        self.write(VmcsField::GuestSsLimit, ss_limit as u64);
-        self.write(VmcsField::GuestLdtrLimit, ldtr_limit as u64);
-        self.write(VmcsField::GuestTrLimit, tr_limit as u64);
+        let efer = unsafe { Msr::new(0xc0000080).read() };
+        self.write(VmcsField::GuestCsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestDsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestEsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestFsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestGsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestSsLimit, 0xffffffffu64);
+        self.write(VmcsField::GuestLdtrLimit, 0xffffu64);
+        self.write(VmcsField::GuestTrLimit, 0xffffu64);
         self.write(VmcsField::GuestGdtrLimit, gdtr_limit as u64);
         self.write(VmcsField::GuestIdtrLimit, idtr_limit as u64);
-        self.write(VmcsField::GuestCsAccessRights, cs_rpl as u64);
-        self.write(VmcsField::GuestDsAccessRights, ds_rpl as u64);
-        self.write(VmcsField::GuestEsAccessRights, es_rpl as u64);
-        self.write(VmcsField::GuestFsAccessRights, fs_rpl as u64);
-        self.write(VmcsField::GuestGsAccessRights, gs_rpl as u64);
-        self.write(VmcsField::GuestSsAccessRights, ss_rpl as u64);
-        self.write(VmcsField::GuestLdtrAccessRights, ldtr_rpl as u64);
-        self.write(VmcsField::GuestTrAccessRights, tr_rpl as u64);
+        self.write(VmcsField::GuestCsAccessRights, 0xc09bu64);
+        self.write(VmcsField::GuestDsAccessRights, 0xc093u64);
+        self.write(VmcsField::GuestEsAccessRights, 0xc093u64);
+        self.write(VmcsField::GuestFsAccessRights, 0xc093u64);
+        self.write(VmcsField::GuestGsAccessRights, 0xc093u64);
+        self.write(VmcsField::GuestSsAccessRights, 0xc093u64);
+        self.write(VmcsField::GuestLdtrAccessRights, 0x0082u64);
+        self.write(VmcsField::GuestTrAccessRights, 0x008bu64);
         self.write(VmcsField::GuestInterruptibilityState, 0);
         self.write(VmcsField::GuestActivityState, 0);
+        self.write(VmcsField::GuestPendingDbgExceptions, 0);
         self.write(VmcsField::GuestIa32SysenterCs, sysenter_cs);
 
         // 64 bit guest state fields
-        self.write(VmcsField::VmcsLinkPointer, !0u64);
+        self.write(VmcsField::VmcsLinkPointer, 0xffffffff_ffffffffu64);
         self.write(VmcsField::GuestIa32Debugctl, 0u64);
-        self.write(VmcsField::GuestIa32Efer, 0u64);
+        self.write(VmcsField::GuestIa32Efer, efer);
 
         // natural width guest state fields
         let cr0 = Cr0::read_raw();
@@ -162,10 +148,10 @@ impl VmcsRegion {
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let dr7 = Dr7::read_raw();
-        let rflags = rflags::read_raw();
+        let rflags = (rflags::read_raw() & !(1 << 17)) | (1 << 9); // VM(bit 17) must be 0, IF(bit 9) must be 1
         let sysenter_esp = unsafe { Msr::new(0x175).read() };
         let sysenter_eip = unsafe { Msr::new(0x176).read() };
-        let rip = unsafe { entry_ret as *const u64 as u64 };
+        let rip = unsafe { &entry_ret as *const u8 as u64 };
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
         self.write(VmcsField::GuestCr4, cr4);
@@ -183,7 +169,6 @@ impl VmcsRegion {
         self.write(VmcsField::GuestRsp, 0xdeadbeef);
         self.write(VmcsField::GuestRip, rip);
         self.write(VmcsField::GuestRflags, rflags);
-        self.write(VmcsField::GuestPendingDbgExceptions, 0);
         self.write(VmcsField::GuestSysenterEsp, sysenter_esp);
         self.write(VmcsField::GuestSysenterEip, sysenter_eip);
     }
@@ -230,17 +215,14 @@ impl VmcsRegion {
         let fs_base = FS::read_base().as_u64();
         let gs_base = GS::read_base().as_u64();
         let tr_base = SegmentDescriptor::base(&tr);
-        // unsafe {
-        //     use core::arch::asm;
-        //     asm!("mov r15, {}; hlt", in(reg) tr_base, options(readonly, nostack, preserves_flags));
-        // };
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let sysenter_esp = unsafe { Msr::new(0x175).read() };
         let sysenter_eip = unsafe { Msr::new(0x176).read() };
         let efer = unsafe { Msr::new(0xc0000080).read() };
         let pat = unsafe { Msr::new(0x277).read() };
-        let host_rip = unsafe { core::mem::transmute(&(x86_64::instructions::hlt as fn())) };
+        // let host_rip = unsafe { core::mem::transmute(x86_64::instructions::hlt as *const ()) };
+        let host_rip = unsafe { &entry_ret as *const u8 as u64 };
         self.write(VmcsField::HostCr0, cr0);
         self.write(VmcsField::HostCr3, cr3);
         self.write(VmcsField::HostCr4, cr4);
@@ -251,10 +233,14 @@ impl VmcsRegion {
         self.write(VmcsField::HostIdtrBase, idtr_base);
         self.write(VmcsField::HostIa32SysenterEsp, sysenter_esp);
         self.write(VmcsField::HostIa32SysenterEip, sysenter_eip);
-        self.write(VmcsField::HostRsp, 0xdeadbeef);
+        self.write(VmcsField::HostRsp, 0xcafebabe);
         self.write(VmcsField::HostRip, host_rip);
         self.write(VmcsField::HostIa32Efer, efer);
         self.write(VmcsField::HostIa32Pat, pat);
+        // unsafe {
+        //     use core::arch::asm;
+        //     asm!("mov r15, {}; hlt", in(reg) host_rip, options(readonly, nostack, preserves_flags));
+        // };
     }
 
     fn setup_vm_control_fields(&mut self) {
@@ -298,7 +284,7 @@ impl VmcsRegion {
         self.write(VmcsField::VmExitMsrLoadCount, 0);
         self.write(
             VmcsField::VmEntryControls,
-            ((0 | entry_controls_or) & entry_controls_and) as u64,
+            (((0 | entry_controls_or) & entry_controls_and) as u64) | (1 << 9), // IA-32e mode guest = 1
         );
         self.write(VmcsField::VmEntryMsrLoadCount, 0);
         self.write(VmcsField::VmEntryIntrInfoField, 0);
@@ -314,12 +300,12 @@ impl VmcsRegion {
         self.write(VmcsField::TscOffset, 0);
 
         // natural width control fields
-        let cr0 = Cr0::read_raw();
-        let cr4 = Cr4::read_raw();
+        // let cr0 = Cr0::read_raw();
+        // let cr4 = Cr4::read_raw();
         self.write(VmcsField::Cr0GuestHostMask, 0);
         self.write(VmcsField::Cr4GuestHostMask, 0);
-        self.write(VmcsField::Cr0ReadShadow, cr0);
-        self.write(VmcsField::Cr4ReadShadow, cr4);
+        self.write(VmcsField::Cr0ReadShadow, 0);
+        self.write(VmcsField::Cr4ReadShadow, 0);
         // self.write(VmcsField::Cr3TargetValue0, 0); // hung
         // self.write(VmcsField::Cr3TargetValue1, 0); // hung
         // self.write(VmcsField::Cr3TargetValue2, 0); // hung
