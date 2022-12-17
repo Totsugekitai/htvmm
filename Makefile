@@ -74,4 +74,11 @@ install:
 bootnext:
 > efibootmgr -n `efibootmgr | grep htvmm | cut -c 5-8`
 
+.PHONY: trace
+trace:
+> echo 1 | sudo tee /sys/kernel/tracing/events/kvm/kvm_nested_vmenter_failed/enable
+> echo 1 | sudo tee /sys/kernel/tracing/events/kvm/kvm_nested_vmexit/enable
+> echo 1 | sudo tee /sys/kernel/debug/tracing/tracing_on
+> sudo watch tail /sys/kernel/debug/tracing/trace
+
 .FORCE:
