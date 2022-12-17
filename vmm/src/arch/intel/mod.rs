@@ -1,13 +1,17 @@
+mod ept;
 mod vmcs;
 mod vmx;
 
 use crate::cpu::{Cpu, CpuError};
+use ept::EptPointer;
 use vmcs::{VmcsField, VmcsRegion};
 use vmx::{vmlaunch, vmxon, VmxError, VmxonRegion};
 
 pub struct IntelCpu {
     vmxon_region: VmxonRegion,
     vmcs_region: VmcsRegion,
+    phys_addr_len: u8,
+    eptp: EptPointer,
 }
 
 impl IntelCpu {
@@ -15,6 +19,8 @@ impl IntelCpu {
         Self {
             vmxon_region: VmxonRegion::new(),
             vmcs_region: VmcsRegion::new(),
+            phys_addr_len: (Self::cpuid(0x8000_0008).eax & 0xff) as u8,
+            eptp: EptPointer::new(),
         }
     }
 

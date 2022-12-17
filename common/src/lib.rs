@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod constants;
+
 use x86_64::{registers::control::Cr3Flags, PhysAddr};
 
 pub const VMM_AREA_SIZE: u64 = 512 * 1024 * 1024;

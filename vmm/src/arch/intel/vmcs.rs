@@ -4,6 +4,7 @@ use crate::{
     BOOT_ARGS,
 };
 use alloc::alloc::alloc;
+use common::constants;
 use core::{alloc::Layout, ptr, slice};
 use x86_64::{
     instructions::tables::{sgdt, sidt},
@@ -30,7 +31,7 @@ impl VmcsRegion {
         let region_slice = slice::from_raw_parts_mut(region, 4096);
         region_slice.fill(0);
 
-        let ia32_vmx_basic = Msr::new(0x480).read(); // MSR_IA32_VMX_BASIC
+        let ia32_vmx_basic = Msr::new(constants::MSR_IA32_VMX_BASIC).read();
         let vmcs_rev_id = (ia32_vmx_basic & 0x7fff_ffff) as u32;
 
         ptr::write_volatile(region as *mut u32, vmcs_rev_id);
@@ -102,8 +103,8 @@ impl VmcsRegion {
         let idtr = sidt();
         let gdtr_limit = gdtr.limit;
         let idtr_limit = idtr.limit;
-        let sysenter_cs = unsafe { Msr::new(0x174).read() };
-        let efer = unsafe { Msr::new(0xc0000080).read() };
+        let sysenter_cs = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_CS).read() };
+        let efer = unsafe { Msr::new(constants::MSR_EFER).read() };
         self.write(VmcsField::GuestCsLimit, 0xffffffff);
         self.write(VmcsField::GuestDsLimit, 0xffffffff);
         self.write(VmcsField::GuestEsLimit, 0xffffffff);
@@ -137,20 +138,14 @@ impl VmcsRegion {
         let cr3_tuple = Cr3::read_raw();
         let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
         let cr4 = Cr4::read_raw();
-        // let cs_base = SegmentDescriptor::base(&cs);
-        // let ds_base = SegmentDescriptor::base(&ds);
-        // let es_base = SegmentDescriptor::base(&es);
-        // let fs_base = SegmentDescriptor::base(&fs);
-        // let gs_base = SegmentDescriptor::base(&gs);
-        // let ss_base = SegmentDescriptor::base(&ss);
         let ldtr_base = SegmentDescriptor::base(&ldtr);
         let tr_base = SegmentDescriptor::base(&tr);
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let dr7 = Dr7::read_raw();
         let rflags = (rflags::read_raw() & !(1 << 17)) | (1 << 9); // VM(bit 17) must be 0, IF(bit 9) must be 1
-        let sysenter_esp = unsafe { Msr::new(0x175).read() };
-        let sysenter_eip = unsafe { Msr::new(0x176).read() };
+        let sysenter_esp = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_ESP).read() };
+        let sysenter_eip = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_EIP).read() };
         let rip = unsafe { &entry_ret as *const u8 as u64 };
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
@@ -195,13 +190,14 @@ impl VmcsRegion {
         self.write(VmcsField::HostTrSelector, tr.0 as u64);
 
         // 32 bit host state fields
-        let sysenter_cs = unsafe { Msr::new(0x174).read() };
+        let sysenter_cs = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_CS).read() };
         self.write(VmcsField::HostIa32SysenterCs, sysenter_cs);
 
         // native width host state fields
         let cr3_tuple = Cr3::read_raw();
         let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
-        let cr4 = Cr4::read() | Cr4Flags::FSGSBASE | Cr4Flags::PHYSICAL_ADDRESS_EXTENSION; // If the “host address-space size” VM-exit control is 1, Bit 5 of the CR4 field (corresponding to CR4.PAE) is 1.
+        // If the “host address-space size” VM-exit control is 1, Bit 5 of the CR4 field (corresponding to CR4.PAE) is 1.
+        let cr4 = Cr4::read() | Cr4Flags::FSGSBASE | Cr4Flags::PHYSICAL_ADDRESS_EXTENSION;
         unsafe {
             Cr4::write(cr4);
         }
@@ -221,10 +217,10 @@ impl VmcsRegion {
         let tr_base = SegmentDescriptor::base(&tr);
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
-        let sysenter_esp = unsafe { Msr::new(0x175).read() };
-        let sysenter_eip = unsafe { Msr::new(0x176).read() };
-        let efer = unsafe { Msr::new(0xc0000080).read() };
-        let pat = unsafe { Msr::new(0x277).read() };
+        let sysenter_esp = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_ESP).read() };
+        let sysenter_eip = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_EIP).read() };
+        let efer = unsafe { Msr::new(constants::MSR_EFER).read() };
+        let pat = unsafe { Msr::new(constants::MSR_IA32_CR_PAT).read() };
         let host_rip = unsafe { core::mem::transmute(x86_64::instructions::hlt as *const ()) };
         // let host_rip = unsafe { &entry_ret as *const u8 as u64 };
         self.write(VmcsField::HostCr0, cr0);
@@ -249,32 +245,36 @@ impl VmcsRegion {
 
     fn setup_vm_control_fields(&mut self) {
         // 32 bit control fields
-        let pin_based_controls = unsafe { Msr::new(0x481).read() };
-        let pin_based_controls_or = (pin_based_controls & 0xffff_ffff) as u32;
-        let pin_based_controls_and = ((pin_based_controls >> 32) & 0xffff_ffff) as u32;
-        let proc_based_controls = unsafe { Msr::new(0x482).read() };
-        let proc_based_controls_or = (proc_based_controls & 0xffff_ffff) as u32;
-        let proc_based_controls_and = ((proc_based_controls >> 32) & 0xffff_ffff) as u32;
-        let proc_based_controls2 = unsafe { Msr::new(0x48b).read() };
-        let proc_based_controls2_or = (proc_based_controls2 & 0xffff_ffff) as u32;
-        let proc_based_controls2_and = ((proc_based_controls2 >> 32) & 0xffff_ffff) as u32;
-        let exit_controls = unsafe { Msr::new(0x483).read() };
-        let exit_controls_or = (exit_controls & 0xffff_ffff) as u32;
-        let exit_controls_and = ((exit_controls >> 32) & 0xffff_ffff) as u32;
-        let entry_controls = unsafe { Msr::new(0x484).read() };
-        let entry_controls_or = (entry_controls & 0xffff_ffff) as u32;
-        let entry_controls_and = ((entry_controls >> 32) & 0xffff_ffff) as u32;
-        self.write(
-            VmcsField::PinBasedVmExecControls,
-            ((0 | pin_based_controls_or) & pin_based_controls_and) as u64,
-        );
+        let pin_based_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_PINBASED_CTLS).read() };
+        let pin_based_ctls_or = (pin_based_ctls & 0xffff_ffff) as u32;
+        let pin_based_ctls_and = ((pin_based_ctls >> 32) & 0xffff_ffff) as u32;
+        let pin_based_ctls = ((0 | pin_based_ctls_or) & pin_based_ctls_and) as u64;
+        let proc_based_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_PROCBASED_CTLS).read() };
+        let proc_based_ctls_or = (proc_based_ctls & 0xffff_ffff) as u32;
+        let proc_based_ctls_and = ((proc_based_ctls >> 32) & 0xffff_ffff) as u32;
+        let proc_based_ctls = ((0 | proc_based_ctls_or) & proc_based_ctls_and) as u64;
+        let proc_based_ctls2 = unsafe { Msr::new(constants::MSR_IA32_VMX_PROCBASED_CTLS2).read() };
+        let proc_based_ctls2_or = (proc_based_ctls2 & 0xffff_ffff) as u32;
+        let proc_based_ctls2_and = ((proc_based_ctls2 >> 32) & 0xffff_ffff) as u32;
+        let proc_based_ctls2 = ((0 | proc_based_ctls2_or) & proc_based_ctls2_and) as u64;
+        let exit_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_EXIT_CTLS).read() };
+        let exit_ctls_or = (exit_ctls & 0xffff_ffff) as u32;
+        let exit_ctls_and = ((exit_ctls >> 32) & 0xffff_ffff) as u32;
+        let exit_ctls = ((0 | exit_ctls_or) & exit_ctls_and) as u64;
+        let entry_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_ENTRY_CTLS).read() };
+        let entry_ctls_or = (entry_ctls & 0xffff_ffff) as u32;
+        let entry_ctls_and = ((entry_ctls >> 32) & 0xffff_ffff) as u32;
+        let entry_ctls = ((0 | entry_ctls_or) & entry_ctls_and) as u64;
+        self.write(VmcsField::PinBasedVmExecControls, pin_based_ctls);
         self.write(
             VmcsField::ProcBasedVmExecControls,
-            (((0 | proc_based_controls_or) & proc_based_controls_and) as u64) | (1 << 7),
+            proc_based_ctls
+                | VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT
+                | VMCS_PROC_BASED_VMEXEC_CTLS_ACTIVE_SECOND_CTLS,
         );
         self.write(
             VmcsField::ProcBasedVmExecControls2,
-            ((0 | proc_based_controls2_or) & proc_based_controls2_and) as u64,
+            proc_based_ctls2 | VMCS_PROC_BASED_VMEXEC_CTLS2_ENABLE_EPT,
         );
         self.write(VmcsField::ExceptionBitmap, 0);
         self.write(VmcsField::PageFaultErrorCodeMask, 0);
@@ -282,13 +282,13 @@ impl VmcsRegion {
         self.write(VmcsField::Cr3TargetCount, 0);
         self.write(
             VmcsField::VmExitControls,
-            (((0 | exit_controls_or) & exit_controls_and) as u64) | (1 << 9), // host address space size = 1
+            exit_ctls | VMCS_VMEXIT_CTLS_HOST_ADDR_SPACE_SIZE,
         );
         self.write(VmcsField::VmExitMsrStoreCount, 0);
         self.write(VmcsField::VmExitMsrLoadCount, 0);
         self.write(
             VmcsField::VmEntryControls,
-            (((0 | entry_controls_or) & entry_controls_and) as u64) | (1 << 9), // IA-32e mode guest = 1
+            entry_ctls | VMCS_VMENTRY_CTLS_IA32E_MODE_GUEST,
         );
         self.write(VmcsField::VmEntryMsrLoadCount, 0);
         self.write(VmcsField::VmEntryIntrInfoField, 0);
@@ -457,3 +457,12 @@ pub enum VmcsField {
     HostRsp = 0x00006c14,
     HostRip = 0x00006c16,
 }
+
+const VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT: u64 = 1 << 7;
+const VMCS_PROC_BASED_VMEXEC_CTLS_ACTIVE_SECOND_CTLS: u64 = 1 << 31;
+
+const VMCS_PROC_BASED_VMEXEC_CTLS2_ENABLE_EPT: u64 = 1 << 1;
+
+const VMCS_VMEXIT_CTLS_HOST_ADDR_SPACE_SIZE: u64 = 1 << 9;
+
+const VMCS_VMENTRY_CTLS_IA32E_MODE_GUEST: u64 = 1 << 9;
