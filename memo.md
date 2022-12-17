@@ -11,3 +11,11 @@ efibootmgr --create --disk /dev/sdX --part 1  --loader \\EFI\\htvmm\\htloader.ef
 efibootmgr -o 0003,0004,0000,0005,0001,0002 #OS のエントリーが優先されるように変更
 efibootmgr -n $(efibootmgr | grep htvmm | cut -c 5-8) #htvmm を起動したい時のみ実行
 ```
+
+## VM EntryとかVM Exitとかのモニタリング
+
+https://resea.org/docs/servers/hv.html あたりをやる
+
+## その他資料
+
+- https://seiya.me/blog/implementing-hypervisor-on-resea
