@@ -104,24 +104,24 @@ impl VmcsRegion {
         let idtr_limit = idtr.limit;
         let sysenter_cs = unsafe { Msr::new(0x174).read() };
         let efer = unsafe { Msr::new(0xc0000080).read() };
-        self.write(VmcsField::GuestCsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestDsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestEsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestFsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestGsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestSsLimit, 0xffffffffu64);
-        self.write(VmcsField::GuestLdtrLimit, 0xffffu64);
-        self.write(VmcsField::GuestTrLimit, 0xffffu64);
+        self.write(VmcsField::GuestCsLimit, 0xffffffff);
+        self.write(VmcsField::GuestDsLimit, 0xffffffff);
+        self.write(VmcsField::GuestEsLimit, 0xffffffff);
+        self.write(VmcsField::GuestFsLimit, 0xffffffff);
+        self.write(VmcsField::GuestGsLimit, 0xffffffff);
+        self.write(VmcsField::GuestSsLimit, 0xffffffff);
+        self.write(VmcsField::GuestLdtrLimit, 0xffff);
+        self.write(VmcsField::GuestTrLimit, 0xffff);
         self.write(VmcsField::GuestGdtrLimit, gdtr_limit as u64);
         self.write(VmcsField::GuestIdtrLimit, idtr_limit as u64);
-        self.write(VmcsField::GuestCsAccessRights, 0xc09bu64);
-        self.write(VmcsField::GuestDsAccessRights, 0xc093u64);
-        self.write(VmcsField::GuestEsAccessRights, 0xc093u64);
-        self.write(VmcsField::GuestFsAccessRights, 0xc093u64);
-        self.write(VmcsField::GuestGsAccessRights, 0xc093u64);
-        self.write(VmcsField::GuestSsAccessRights, 0xc093u64);
-        self.write(VmcsField::GuestLdtrAccessRights, 0x0082u64);
-        self.write(VmcsField::GuestTrAccessRights, 0x008bu64);
+        self.write(VmcsField::GuestCsAccessRights, 0xa09b);
+        self.write(VmcsField::GuestDsAccessRights, 0xc093);
+        self.write(VmcsField::GuestEsAccessRights, 0xc093);
+        self.write(VmcsField::GuestFsAccessRights, 0xc093);
+        self.write(VmcsField::GuestGsAccessRights, 0xc093);
+        self.write(VmcsField::GuestSsAccessRights, 0xc093);
+        self.write(VmcsField::GuestLdtrAccessRights, 0x0082);
+        self.write(VmcsField::GuestTrAccessRights, 0x008b);
         self.write(VmcsField::GuestInterruptibilityState, 0);
         self.write(VmcsField::GuestActivityState, 0);
         self.write(VmcsField::GuestPendingDbgExceptions, 0);
@@ -137,12 +137,12 @@ impl VmcsRegion {
         let cr3_tuple = Cr3::read_raw();
         let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
         let cr4 = Cr4::read_raw();
-        let cs_base = SegmentDescriptor::base(&cs);
-        let ds_base = SegmentDescriptor::base(&ds);
-        let es_base = SegmentDescriptor::base(&es);
-        let fs_base = SegmentDescriptor::base(&fs);
-        let gs_base = SegmentDescriptor::base(&gs);
-        let ss_base = SegmentDescriptor::base(&ss);
+        // let cs_base = SegmentDescriptor::base(&cs);
+        // let ds_base = SegmentDescriptor::base(&ds);
+        // let es_base = SegmentDescriptor::base(&es);
+        // let fs_base = SegmentDescriptor::base(&fs);
+        // let gs_base = SegmentDescriptor::base(&gs);
+        // let ss_base = SegmentDescriptor::base(&ss);
         let ldtr_base = SegmentDescriptor::base(&ldtr);
         let tr_base = SegmentDescriptor::base(&tr);
         let gdtr_base = gdtr.base.as_u64();
@@ -155,12 +155,12 @@ impl VmcsRegion {
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
         self.write(VmcsField::GuestCr4, cr4);
-        self.write(VmcsField::GuestCsBase, cs_base as u64);
-        self.write(VmcsField::GuestDsBase, ds_base as u64);
-        self.write(VmcsField::GuestEsBase, es_base as u64);
-        self.write(VmcsField::GuestFsBase, fs_base as u64);
-        self.write(VmcsField::GuestGsBase, gs_base as u64);
-        self.write(VmcsField::GuestSsBase, ss_base as u64);
+        self.write(VmcsField::GuestCsBase, 0);
+        self.write(VmcsField::GuestDsBase, 0);
+        self.write(VmcsField::GuestEsBase, 0);
+        self.write(VmcsField::GuestFsBase, 0);
+        self.write(VmcsField::GuestGsBase, 0);
+        self.write(VmcsField::GuestSsBase, 0);
         self.write(VmcsField::GuestLdtrBase, ldtr_base as u64);
         self.write(VmcsField::GuestTrBase, tr_base as u64);
         self.write(VmcsField::GuestGdtrBase, gdtr_base);
@@ -171,6 +171,10 @@ impl VmcsRegion {
         self.write(VmcsField::GuestRflags, rflags);
         self.write(VmcsField::GuestSysenterEsp, sysenter_esp);
         self.write(VmcsField::GuestSysenterEip, sysenter_eip);
+        // unsafe {
+        //     use core::arch::asm;
+        //     asm!("mov r15, {}; hlt", in(reg) idtr_limit as u64, options(readonly, nostack, preserves_flags));
+        // };
     }
 
     fn setup_host_state_area(&mut self) {
@@ -221,8 +225,8 @@ impl VmcsRegion {
         let sysenter_eip = unsafe { Msr::new(0x176).read() };
         let efer = unsafe { Msr::new(0xc0000080).read() };
         let pat = unsafe { Msr::new(0x277).read() };
-        // let host_rip = unsafe { core::mem::transmute(x86_64::instructions::hlt as *const ()) };
-        let host_rip = unsafe { &entry_ret as *const u8 as u64 };
+        let host_rip = unsafe { core::mem::transmute(x86_64::instructions::hlt as *const ()) };
+        // let host_rip = unsafe { &entry_ret as *const u8 as u64 };
         self.write(VmcsField::HostCr0, cr0);
         self.write(VmcsField::HostCr3, cr3);
         self.write(VmcsField::HostCr4, cr4);
@@ -266,7 +270,7 @@ impl VmcsRegion {
         );
         self.write(
             VmcsField::ProcBasedVmExecControls,
-            ((0 | proc_based_controls_or) & proc_based_controls_and) as u64,
+            (((0 | proc_based_controls_or) & proc_based_controls_and) as u64) | (1 << 7),
         );
         self.write(
             VmcsField::ProcBasedVmExecControls2,

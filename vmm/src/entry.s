@@ -30,6 +30,7 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     .byte   0x48                        # REX.W prefix
     ljmpl   *(%rax)
 entry_ret:
+    hlt
     mov     uefi_rsp(%rip), %rsp
     call    restore_uefi_regs
     ret

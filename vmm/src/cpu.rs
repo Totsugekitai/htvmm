@@ -96,11 +96,11 @@ impl SegmentDescriptor {
             | ((segment_descriptor & (0xffff << 16)) >> 16)
     }
 
-    pub fn limit(sel: &SegmentSelector) -> u32 {
-        let mut limit: u32 = 0;
-        unsafe {
-            asm!("lsl {}, [{}]", in(reg) &mut limit, in(reg) &sel.0, options(nostack, preserves_flags));
-        }
-        limit
-    }
+    // pub fn limit(sel: &SegmentSelector) -> u32 {
+    //     let mut limit: u32 = 0;
+    //     unsafe {
+    //         asm!("lsl {}, [{}]", in(reg) &mut limit, in(reg) &sel.0, options(nostack, preserves_flags));
+    //     }
+    //     limit
+    // }
 }
