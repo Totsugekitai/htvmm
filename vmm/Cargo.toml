@@ -7,6 +7,7 @@ edition = "2021"
 crossbeam = { version = "0.8.2", default-features = false }
 x86_64 = "0.14.10"
 linked_list_allocator = "0.10.4"
+bitflags = "1.3.2"
 
 common = { path = "../common" }
 
