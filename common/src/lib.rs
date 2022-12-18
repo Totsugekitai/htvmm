@@ -15,6 +15,7 @@ pub struct BootArgs {
     pub uefi_cr3: PhysAddr,
     pub uefi_cr3_flags: Cr3Flags,
     pub vmm_phys_offset: i64,
+    pub memory_size: u64,
 }
 
 impl BootArgs {
@@ -23,6 +24,7 @@ impl BootArgs {
             uefi_cr3: PhysAddr::new(0),
             uefi_cr3_flags: Cr3Flags::empty(),
             vmm_phys_offset: 0,
+            memory_size: 0,
         }
     }
 }

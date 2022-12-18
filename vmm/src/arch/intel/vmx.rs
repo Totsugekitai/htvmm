@@ -1,4 +1,7 @@
-use crate::{arch::intel::vmcs::VmcsRegion, BOOT_ARGS};
+use crate::{
+    arch::intel::vmcs::{VmcsField, VmcsRegion},
+    BOOT_ARGS,
+};
 use alloc::alloc::alloc;
 use core::{alloc::Layout, arch::asm, ptr, slice};
 use x86_64::{
@@ -8,8 +11,6 @@ use x86_64::{
     },
     PhysAddr,
 };
-
-use super::vmcs::VmcsField;
 
 pub unsafe fn vmxon(vmxon_region: &mut VmxonRegion) -> Result<(), VmxError> {
     let cr4 = Cr4::read();
@@ -113,6 +114,16 @@ unsafe fn asm_vmlaunch() -> Result<(), VmxError> {
     check_vmx_error(flags)
 }
 
+pub unsafe fn vmresume() -> Result<(), VmxError> {
+    asm_vmresume()
+}
+
+unsafe fn asm_vmresume() -> Result<(), VmxError> {
+    let mut flags;
+    asm!("vmresume; pushfq; pop rax", out("rax") flags);
+    check_vmx_error(flags)
+}
+
 fn check_vmx_error(flags: u64) -> Result<(), VmxError> {
     let cf = (flags & 0b1) == 1;
     let zf = ((flags >> 6) & 0b1) == 1;
@@ -127,6 +138,8 @@ fn check_vmx_error(flags: u64) -> Result<(), VmxError> {
 }
 
 pub struct VmxonRegion(*mut u8);
+
+unsafe impl Send for VmxonRegion {}
 
 impl VmxonRegion {
     pub unsafe fn new() -> Self {
@@ -157,4 +170,84 @@ impl VmxonRegion {
 pub enum VmxError {
     InvalidPointer,
     VmInstructionError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u64)]
+enum VmExitReason {
+    Nmi = 0,
+    ExternalInterrupt = 1,
+    TripleFault = 2,
+    InitSignal = 3,
+    StartupIpi = 4,
+    IoSmi = 5,
+    OtherSmi = 6,
+    InterruptWindow = 7,
+    NmiWindow = 8,
+    TaskSwitch = 9,
+    Cpuid = 10,
+    Getsec = 11,
+    Hlt = 12,
+    Invd = 13,
+    Invlpg = 14,
+    Rdpmc = 15,
+    Rdtsc = 16,
+    Rsm = 17,
+    Vmcall = 18,
+    Vmclear = 19,
+    Vmlaunch = 20,
+    Vmptrld = 21,
+    Vmptrst = 22,
+    Vmread = 23,
+    Vmresume = 24,
+    Vmwrite = 25,
+    Vmxoff = 26,
+    Vmxon = 27,
+    CrAccess = 28,
+    MovDr = 29,
+    IoInstruction = 30,
+    Rdmsr = 31,
+    Wrmsr = 32,
+    VmentryFailInvalidGuestState = 33,
+    VmentryFailMsrLoading = 34,
+    Mwait = 36,
+    MonitorTrapFlag = 37,
+    Monitor = 39,
+    Pause = 40,
+    VmentryFailMachineCheckEvent = 41,
+    TprBelowThreshold = 43,
+    ApicAccess = 44,
+    VirtualizedEoi = 45,
+    AccessGdtrOrIdtr = 46,
+    AccessLdtrOrTr = 47,
+    EptViolation = 48,
+    EptMisconfiguration = 49,
+    Invept = 50,
+    Rdtscp = 51,
+    VmxPreemptionTimerExpired = 52,
+    Invvpid = 53,
+    WbinvdOrWbnoinvd = 54,
+    Xsetbv = 55,
+    ApicWrite = 56,
+    Rdrand = 57,
+    Invpcid = 58,
+    Vmfunc = 59,
+    Encls = 60,
+    Rdseed = 61,
+    PageModificationLogFull = 62,
+    Xsaves = 63,
+    Xrstors = 64,
+    Pconfig = 65,
+    SppRelatedEvent = 66,
+    Umwait = 67,
+    Tpause = 68,
+    Loadiwkey = 69,
+}
+
+pub fn handle_vmexit(exit_reason: u64, exit_qual: u64) {
+    let exit_reason = unsafe { core::mem::transmute(exit_reason) };
+    match exit_reason {
+        VmExitReason::Wrmsr => x86_64::instructions::hlt(),
+        _ => {}
+    }
 }

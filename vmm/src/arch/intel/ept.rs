@@ -1,3 +1,4 @@
+use crate::BOOT_ARGS;
 use alloc::alloc::alloc;
 use bitflags::bitflags;
 use core::{
@@ -9,13 +10,15 @@ use x86_64::PhysAddr;
 
 bitflags! {
     pub struct EptPointerFlags: u64 {
-        const MEMORY_TYPE = 0b111;
-        const PAGE_WALK_LENGTH = 0b111 << 3;
+        const MEMORY_TYPE_UNCACHEABLE = 0;
+        const MEMORY_TYPE_WRITEBACK = 6;
+        const PAGE_WALK_LENGTH_4 = 0b011 << 3;
         const ACCESSED_AND_DIRTY = 1 << 6;
         const SUPERVISOR_SHADOW_STACK = 1 << 7;
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EptPointer(u64);
 
 impl EptPointer {
@@ -44,11 +47,11 @@ impl EptPointer {
     }
 }
 
-#[repr(u64)]
-pub enum MemoryType {
-    Uncacheable = 0,
-    Writeback = 6,
-}
+// #[repr(u64)]
+// pub enum MemoryType {
+//     Uncacheable = 0,
+//     Writeback = 6,
+// }
 
 pub struct EptTable(*mut u8);
 
@@ -63,6 +66,18 @@ impl EptTable {
     pub fn zero(&mut self) {
         let table = unsafe { slice::from_raw_parts_mut(self.0, 4096) };
         table.fill(0);
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut u8 {
+        self.0
+    }
+
+    pub fn paddr(&self) -> PhysAddr {
+        let virt = i64::try_from(self.as_mut_ptr() as u64).unwrap();
+        let phys = unsafe {
+            u64::try_from(virt + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset).unwrap()
+        };
+        PhysAddr::new(phys)
     }
 }
 
@@ -82,7 +97,7 @@ impl IndexMut<usize> for EptTable {
     }
 }
 
-#[repr(transparent)]
+#[repr(C)]
 pub struct EptTableEntry(u64);
 
 impl EptTableEntry {
@@ -120,7 +135,11 @@ bitflags! {
         const READ_ACCESS = 1 << 0;
         const WRITE_ACCESS = 1 << 1;
         const EXECUTE_ACCESS = 1 << 2;
-        const MEMORY_TYPE = 0b111 << 3;
+        const MEMORY_TYPE_UC = 0 << 3;
+        const MEMORY_TYPE_WC = 1 << 3;
+        const MEMORY_TYPE_WT = 4 << 3;
+        const MEMORY_TYPE_WP = 5 << 3;
+        const MEMORY_TYPE_WB = 6 << 3;
         const IGNORE_PAT_MEMORY_TYPE = 1 << 6;
         const HUGE_PAGE = 1 << 7;
         const ACCESSED = 1 << 8;
@@ -131,4 +150,41 @@ bitflags! {
         const SUPERVISOR_SHADOW_STACK = 1 << 60;
         const SUPPRESS_VE = 1 << 63;
     }
+}
+
+pub fn init_ept() -> EptPointer {
+    let memory_size = unsafe { BOOT_ARGS.as_ptr().as_ref().unwrap().memory_size };
+    let memory_size_gb = memory_size / (1024 * 1024 * 1024);
+
+    let mut ept_pml4 = EptTable::new();
+    ept_pml4.zero();
+
+    let mut ept_pdpt = EptTable::new();
+    ept_pdpt.zero();
+
+    ept_pml4[0].set_addr(ept_pdpt.paddr());
+    ept_pml4[0].set_flags(
+        EptTableFlags::READ_ACCESS
+            | EptTableFlags::WRITE_ACCESS
+            | EptTableFlags::EXECUTE_ACCESS
+            | EptTableFlags::SUPPRESS_VE,
+    );
+
+    for i in 0..(memory_size_gb as usize) {
+        ept_pdpt[i].set_addr(PhysAddr::new(1024 * 1024 * 1024 * (i as u64)));
+        ept_pdpt[i].set_flags(
+            EptTableFlags::HUGE_PAGE
+                | EptTableFlags::READ_ACCESS
+                | EptTableFlags::WRITE_ACCESS
+                | EptTableFlags::EXECUTE_ACCESS
+                | EptTableFlags::MEMORY_TYPE_WB
+                | EptTableFlags::SUPPRESS_VE,
+        )
+    }
+
+    let mut eptp = EptPointer::new();
+    eptp.set_addr(ept_pml4.paddr());
+    eptp.set_flags(EptPointerFlags::MEMORY_TYPE_WRITEBACK | EptPointerFlags::PAGE_WALK_LENGTH_4);
+
+    eptp
 }

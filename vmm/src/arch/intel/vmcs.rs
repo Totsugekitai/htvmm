@@ -1,5 +1,8 @@
 use crate::{
-    arch::intel::vmx::{vmclear, vmptrld, vmread, vmwrite},
+    arch::intel::{
+        ept::EptPointer,
+        vmx::{vmclear, vmptrld, vmread, vmwrite},
+    },
     cpu::{Ldtr, SegmentDescriptor, Tr},
     BOOT_ARGS,
 };
@@ -23,6 +26,8 @@ extern "C" {
 }
 
 pub struct VmcsRegion(*mut u8);
+
+unsafe impl Send for VmcsRegion {}
 
 impl VmcsRegion {
     pub unsafe fn new() -> Self {
@@ -73,10 +78,10 @@ impl VmcsRegion {
         }
     }
 
-    pub fn setup(&mut self) {
+    pub fn setup(&mut self, eptp: EptPointer, vmexit_host_rip: u64) {
         self.setup_guest_state_area();
-        self.setup_host_state_area();
-        self.setup_vm_control_fields();
+        self.setup_host_state_area(vmexit_host_rip);
+        self.setup_vm_control_fields(eptp);
     }
 
     fn setup_guest_state_area(&mut self) {
@@ -172,7 +177,7 @@ impl VmcsRegion {
         // };
     }
 
-    fn setup_host_state_area(&mut self) {
+    fn setup_host_state_area(&mut self, vmexit_host_rip: u64) {
         // 16 bit host state fields
         let cs = CS::get_reg();
         let ds = DS::get_reg();
@@ -221,8 +226,9 @@ impl VmcsRegion {
         let sysenter_eip = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_EIP).read() };
         let efer = unsafe { Msr::new(constants::MSR_EFER).read() };
         let pat = unsafe { Msr::new(constants::MSR_IA32_CR_PAT).read() };
-        let host_rip = unsafe { core::mem::transmute(x86_64::instructions::hlt as *const ()) };
-        // let host_rip = unsafe { &entry_ret as *const u8 as u64 };
+        let layout = Layout::from_size_align(4096, 16).unwrap();
+        let stack_bottom = unsafe { alloc(layout) };
+        let stack_top = stack_bottom as u64 + 4096 - 16;
         self.write(VmcsField::HostCr0, cr0);
         self.write(VmcsField::HostCr3, cr3);
         self.write(VmcsField::HostCr4, cr4);
@@ -233,8 +239,8 @@ impl VmcsRegion {
         self.write(VmcsField::HostIdtrBase, idtr_base);
         self.write(VmcsField::HostIa32SysenterEsp, sysenter_esp);
         self.write(VmcsField::HostIa32SysenterEip, sysenter_eip);
-        self.write(VmcsField::HostRsp, 0xcafebabe);
-        self.write(VmcsField::HostRip, host_rip);
+        self.write(VmcsField::HostRsp, stack_top);
+        self.write(VmcsField::HostRip, vmexit_host_rip);
         self.write(VmcsField::HostIa32Efer, efer);
         self.write(VmcsField::HostIa32Pat, pat);
         // unsafe {
@@ -243,7 +249,7 @@ impl VmcsRegion {
         // };
     }
 
-    fn setup_vm_control_fields(&mut self) {
+    fn setup_vm_control_fields(&mut self, eptp: EptPointer) {
         // 32 bit control fields
         let pin_based_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_PINBASED_CTLS).read() };
         let pin_based_ctls_or = (pin_based_ctls & 0xffff_ffff) as u32;
@@ -300,8 +306,8 @@ impl VmcsRegion {
         self.write(VmcsField::VmExitMsrLoadAddr, 0);
         self.write(VmcsField::VmExitMsrStoreAddr, 0);
         self.write(VmcsField::VmEntryMsrLoadAddr, 0);
-        // self.write(VmcsField::ExecVmcsPointer, 0); // hung
         self.write(VmcsField::TscOffset, 0);
+        self.write(VmcsField::EptPointer, eptp.as_u64());
 
         // natural width control fields
         // let cr0 = Cr0::read_raw();

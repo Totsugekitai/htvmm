@@ -3,14 +3,20 @@ mod vmcs;
 mod vmx;
 
 use crate::cpu::{Cpu, CpuError};
-use ept::EptPointer;
+use core::arch::asm;
+use crossbeam::atomic::AtomicCell;
+use ept::{init_ept, EptPointer};
+use lazy_static::lazy_static;
 use vmcs::{VmcsField, VmcsRegion};
-use vmx::{vmlaunch, vmxon, VmxError, VmxonRegion};
+use vmx::{handle_vmexit, vmlaunch, vmresume, vmxon, VmxError, VmxonRegion};
+
+lazy_static! {
+    static ref BSP: AtomicCell<IntelCpu> = AtomicCell::new(unsafe { IntelCpu::new() });
+}
 
 pub struct IntelCpu {
     vmxon_region: VmxonRegion,
     vmcs_region: VmcsRegion,
-    phys_addr_len: u8,
     eptp: EptPointer,
 }
 
@@ -19,7 +25,6 @@ impl IntelCpu {
         Self {
             vmxon_region: VmxonRegion::new(),
             vmcs_region: VmcsRegion::new(),
-            phys_addr_len: (Self::cpuid(0x8000_0008).eax & 0xff) as u8,
             eptp: EptPointer::new(),
         }
     }
@@ -62,7 +67,10 @@ impl Cpu for IntelCpu {
     fn init_as_bsp(&mut self) {
         self.vmcs_region.clear();
         self.vmcs_region.load();
-        self.vmcs_region.setup();
+
+        self.eptp = init_ept();
+        self.vmcs_region
+            .setup(self.eptp, resume_vm as *const () as u64);
     }
 
     fn run_vm(&mut self) {
@@ -72,10 +80,27 @@ impl Cpu for IntelCpu {
                     VmxError::InvalidPointer => panic!(),
                     VmxError::VmInstructionError => {
                         let error_code = self.vmcs_region.read(VmcsField::VmInstructionError);
-                        use core::arch::asm;
                         asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
                     }
                 }
+            }
+        }
+    }
+}
+
+unsafe fn resume_vm() {
+    let cpu = BSP.as_ptr().as_ref().unwrap();
+    let exit_reason = cpu.vmcs_region.read(VmcsField::VmExitReason);
+    let exit_qual = cpu.vmcs_region.read(VmcsField::ExitQualification);
+
+    handle_vmexit(exit_reason, exit_qual);
+
+    if let Err(e) = vmresume() {
+        match e {
+            VmxError::InvalidPointer => panic!(),
+            VmxError::VmInstructionError => {
+                let error_code = cpu.vmcs_region.read(VmcsField::VmInstructionError);
+                asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
             }
         }
     }

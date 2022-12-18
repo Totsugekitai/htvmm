@@ -30,6 +30,10 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut systab).unwrap();
 
     let boot_services = systab.boot_services();
+
+    let memory_size = get_memory_size(boot_services);
+    println!("Memory size: {}GB", memory_size / (1024 * 1024 * 1024));
+
     let simple_fs = boot_services.get_image_file_system(image_handle);
     if simple_fs.is_err() {
         halt("[ERROR] SimpleFileSystem");
@@ -98,6 +102,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         uefi_cr3: PhysAddr::new(uefi_cr3_u64),
         uefi_cr3_flags,
         vmm_phys_offset: alloc_paddr as i64 - VMM_AREA_HEAD_VADDR as i64,
+        memory_size,
     };
 
     let entry_point = alloc_paddr + vmm_entry_offset;
@@ -165,5 +170,29 @@ fn halt(error_msg: &str) -> ! {
     println!("{error_msg}");
     loop {
         x86_64::instructions::hlt();
+    }
+}
+
+fn get_memory_size(bs: &BootServices) -> u64 {
+    let mut size = 0;
+    loop {
+        size += 0x100;
+        let pool = bs.allocate_pool(MemoryType::UNUSABLE, size).unwrap();
+        let buf = unsafe { core::slice::from_raw_parts_mut(pool, size) };
+        let memmap = bs.memory_map(buf);
+        if let Ok((_mapkey, memdesc_iter)) = memmap {
+            let mut memory_size = 0;
+            for memdesc in memdesc_iter {
+                let phys_end = memdesc.phys_start + (0x1000 * memdesc.page_count);
+                if memory_size < phys_end {
+                    memory_size = phys_end;
+                }
+            }
+            bs.free_pool(pool).unwrap();
+            return memory_size;
+        } else {
+            bs.free_pool(pool).unwrap();
+            continue;
+        }
     }
 }
