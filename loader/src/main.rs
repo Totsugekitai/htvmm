@@ -7,13 +7,17 @@ mod paging;
 #[macro_use]
 extern crate alloc;
 
+use crate::paging::create_page_table;
 use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE};
-use core::arch::asm;
+use core::{arch::asm, fmt::Write};
 use goblin::elf;
 use uefi::{
     data_types::Align,
     prelude::*,
-    proto::media::file::{File, FileAttribute, FileInfo, FileMode},
+    proto::{
+        console::text::Output,
+        media::file::{File, FileAttribute, FileInfo, FileMode},
+    },
     table::boot::{AllocateType, MemoryType},
     CStr16,
 };
@@ -33,6 +37,9 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     let memory_size = get_memory_size(boot_services);
     println!("Memory size: {}GB", memory_size / (1024 * 1024 * 1024));
+    let uefi_write_char = Output::write_char as *const () as u64;
+    let mut systab_clone = unsafe { systab.unsafe_clone() };
+    let uefi_output = systab_clone.stdout() as *mut Output as u64;
 
     let simple_fs = boot_services.get_image_file_system(image_handle);
     if simple_fs.is_err() {
@@ -67,15 +74,17 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let file_info = file_info.unwrap();
 
     let file_size = file_info.file_size();
+    let vmm_page_count = VMM_AREA_SIZE as usize / PAGE_SIZE;
     let alloc_paddr = boot_services.allocate_pages(
         AllocateType::MaxAddress(MAX_ADDRESS as usize),
         MemoryType::UNUSABLE,
-        VMM_AREA_SIZE as usize / PAGE_SIZE,
+        vmm_page_count,
     );
     if alloc_paddr.is_err() {
         halt("[ERROR] allocate_pages");
     }
     let alloc_paddr = alloc_paddr.unwrap();
+    // modify_uefi_page_table(PhysAddr::new(alloc_paddr), vmm_page_count);
 
     let vmm_regular_file = vmm_file_handle.into_regular_file();
     if vmm_regular_file.is_none() {
@@ -103,14 +112,15 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         uefi_cr3_flags,
         vmm_phys_offset: alloc_paddr as i64 - VMM_AREA_HEAD_VADDR as i64,
         memory_size,
+        uefi_write_char,
+        uefi_output,
     };
 
     let entry_point = alloc_paddr + vmm_entry_offset;
 
     println!("ENTER VMM: 0x{:x}", VMM_ENTRY_VADDR);
 
-    let (vmm_pml4_table, cr3_flags) =
-        crate::paging::create_page_table(PhysAddr::new(entry_point), boot_services);
+    let (vmm_pml4_table, cr3_flags) = create_page_table(PhysAddr::new(entry_point), boot_services);
 
     x86_64::instructions::interrupts::disable();
     unsafe {

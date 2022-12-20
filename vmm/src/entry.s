@@ -3,6 +3,8 @@
 
 .global     entry, entry_ret
 entry:                                  # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
+    mov     16(%rdi), %rax
+    mov     %rax, vmm_physoff(%rip)
     call    set_vmm_tss64
     call    save_uefi_regs
     call    init_vmm_regs
@@ -170,6 +172,72 @@ set_vmm_tss64:
     pop     %rax
     ret
 
+.global     call_uefi_write_char        # unsafe fn call_uefi_write_char(fp: u64, output: u64, c: char);
+call_uefi_write_char:
+    push    %rbp
+    mov     %rsp, %rbp
+    push    %rbx
+    push    %rcx
+    push    %rdx
+    push    %r8
+    push    %r9
+    push    %r10
+    mov     %rsp, %r10
+    mov     uefi_rsp(%rip), %rsp
+    push    %r10                        # vmm_rsp
+    mov     %cr3, %r10
+    push    %r10                        # vmm_cr3
+    mov     %rdi, %r8
+    mov     %rsi, %r9
+    mov     uefi_cr3(%rip), %rbx
+    lea     3f(%rip), %rax
+    # because vmm_physoff is i64, check whether positive of negative
+    mov     vmm_physoff(%rip), %rdi
+    shr     $63, %rdi
+    cmp     $1, %rdi
+    jne     1f
+    # negative
+    add     %rdi, %rax
+    jmp     2f
+1:
+    # positive
+    sub     %rdi, %rax
+2:
+    jmp     *%rax
+3:
+    nop                                 # for QEMU
+    mov     %r8, %rax
+    mov     %r9, %rcx
+    mov     %rbx, %cr3
+    mov     %rsp, %rbx
+    and     $0xf, %rbx
+    cmpb    $0x8, %bl
+    cld
+    sti
+    je      2f
+    call    *%rax
+    jmp     3f
+2:
+    sub     $8, %rsp
+    call    *%rax
+    add     $8, %rsp
+3:
+    cli
+    pop     %r10                        # vmm_cr3
+    pop     %rsp                        # vmm_rsp
+    mov     %r10, %cr3
+    lea     1f(%rip), %rax
+    jmp     *%rax
+1:
+    pop     %r10
+    pop     %r9
+    pop     %r8
+    pop     %rdx
+    pop     %rcx
+    pop     %rbx
+    pop     %rbp
+    ret
+
 # ===== UEFI special registers =====
 .align      2
 .global     uefi_cs
@@ -264,6 +332,16 @@ uefi_msr_ia32_sysenter_eip_high:
 # === UEFI special registers end ===
 
 # ===== VMM special registers =====
+.align      8
+.global     vmm_physoff
+vmm_physoff:
+    .quad   0
+
+.align      8
+.global     vmm_rsp
+vmm_rsp:
+    .quad   0
+
 .align      8
 .global     vmm_cr3
 vmm_cr3:
