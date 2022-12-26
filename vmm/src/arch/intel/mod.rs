@@ -2,16 +2,24 @@ mod ept;
 mod vmcs;
 mod vmx;
 
-use crate::cpu::{Cpu, CpuError};
+use crate::{
+    arch::intel::vmx::VmExitGeneralPurposeRegister,
+    cpu::{Cpu, CpuError},
+    uefi_println,
+};
 use core::arch::asm;
 use crossbeam::atomic::AtomicCell;
 use ept::{init_ept, EptPointer};
 use lazy_static::lazy_static;
 use vmcs::{VmcsField, VmcsRegion};
-use vmx::{handle_vmexit, vmlaunch, vmresume, vmxon, VmxError, VmxonRegion};
+use vmx::{handle_vmexit, vmlaunch, vmxon, VmxError, VmxonRegion};
 
 lazy_static! {
-    static ref BSP: AtomicCell<IntelCpu> = AtomicCell::new(unsafe { IntelCpu::new() });
+    pub static ref BSP: AtomicCell<IntelCpu> = AtomicCell::new(unsafe { IntelCpu::new() });
+}
+
+extern "C" {
+    static vmexit_handler: u8;
 }
 
 pub struct IntelCpu {
@@ -70,7 +78,7 @@ impl Cpu for IntelCpu {
 
         self.eptp = init_ept();
         self.vmcs_region
-            .setup(self.eptp, resume_vm as *const () as u64);
+            .setup(self.eptp, unsafe { &vmexit_handler as *const u8 as u64 });
     }
 
     fn run_vm(&mut self) {
@@ -88,20 +96,37 @@ impl Cpu for IntelCpu {
     }
 }
 
-unsafe fn resume_vm() {
+#[no_mangle]
+unsafe fn resume_vm(gpr: *mut VmExitGeneralPurposeRegister) {
     let cpu = BSP.as_ptr().as_ref().unwrap();
     let exit_reason = cpu.vmcs_region.read(VmcsField::VmExitReason);
     let exit_qual = cpu.vmcs_region.read(VmcsField::ExitQualification);
 
-    handle_vmexit(exit_reason, exit_qual);
+    // uefi_println!("VMExit!!!!!");
+    // uefi_println!("reason: {exit_reason}, qualification: {exit_qual:x}");
 
-    if let Err(e) = vmresume() {
-        match e {
-            VmxError::InvalidPointer => panic!(),
-            VmxError::VmInstructionError => {
-                let error_code = cpu.vmcs_region.read(VmcsField::VmInstructionError);
-                asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
-            }
-        }
-    }
+    let guest_rsp = cpu.vmcs_region.read(VmcsField::GuestRsp);
+    let guest_rip = cpu.vmcs_region.read(VmcsField::GuestRip);
+
+    uefi_println!("guest_rsp: {:x}, guest_rip: {:x}", guest_rsp, guest_rip);
+
+    // asm!(
+    //     "mov r14, {rsp}",
+    //     "mov r15, {rip}",
+    //     "hlt",
+    //     rsp = in(reg) guest_rsp,
+    //     rip = in(reg) guest_rip,
+    // );
+
+    handle_vmexit(exit_reason, exit_qual, gpr);
+
+    // if let Err(e) = vmresume() {
+    //     match e {
+    //         VmxError::InvalidPointer => panic!(),
+    //         VmxError::VmInstructionError => {
+    //             let error_code = cpu.vmcs_region.read(VmcsField::VmInstructionError);
+    //             asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
+    //         }
+    //     }
+    // }
 }

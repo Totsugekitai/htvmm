@@ -37,6 +37,7 @@ pub trait Cpu {
     fn run_vm(&mut self);
 }
 
+#[derive(Debug)]
 pub enum CpuError {
     NotSupported,
     VmxRelated,

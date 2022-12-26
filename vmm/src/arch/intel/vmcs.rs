@@ -18,13 +18,27 @@ use x86_64::{
         rflags,
         segmentation::{Segment, Segment64, CS, DS, ES, FS, GS, SS},
     },
-    PhysAddr,
+    structures::DescriptorTablePointer,
+    PhysAddr, VirtAddr,
 };
 
 extern "C" {
     static entry_ret: u8;
+    static uefi_cs: u16;
+    static uefi_ds: u16;
+    static uefi_es: u16;
+    static uefi_fs: u16;
+    static uefi_gs: u16;
+    static uefi_ss: u16;
+    static uefi_gdtr: u8;
+    static uefi_idtr: u8;
+    static uefi_ldtr: u64;
+    static uefi_tr: u64;
+    static uefi_rsp: u64;
+    static uefi_cr3: u64;
 }
 
+#[derive(Debug)]
 pub struct VmcsRegion(*mut u8);
 
 unsafe impl Send for VmcsRegion {}
@@ -72,7 +86,7 @@ impl VmcsRegion {
         unsafe { vmread(field) }
     }
 
-    fn write(&mut self, field: VmcsField, val: u64) {
+    pub fn write(&mut self, field: VmcsField, val: u64) {
         unsafe {
             vmwrite(field, val);
         }
@@ -94,18 +108,42 @@ impl VmcsRegion {
         let ss = SS::get_reg();
         let ldtr = Ldtr::get_reg();
         let tr = Tr::get_reg();
-        self.write(VmcsField::GuestCsSelector, cs.0 as u64);
-        self.write(VmcsField::GuestDsSelector, ds.0 as u64);
-        self.write(VmcsField::GuestEsSelector, es.0 as u64);
-        self.write(VmcsField::GuestFsSelector, fs.0 as u64);
-        self.write(VmcsField::GuestGsSelector, gs.0 as u64);
-        self.write(VmcsField::GuestSsSelector, ss.0 as u64);
-        self.write(VmcsField::GuestLdtrSelector, ldtr.0 as u64);
-        self.write(VmcsField::GuestTrSelector, tr.0 as u64);
+        let cs = unsafe { uefi_cs };
+        let ds = unsafe { uefi_ds };
+        let es = unsafe { uefi_es };
+        let fs = unsafe { uefi_fs };
+        let gs = unsafe { uefi_gs };
+        let ss = unsafe { uefi_ss };
+        let ldtr = unsafe { uefi_ldtr };
+        let tr = unsafe { uefi_tr };
+        self.write(VmcsField::GuestCsSelector, cs as u64);
+        self.write(VmcsField::GuestDsSelector, ds as u64);
+        self.write(VmcsField::GuestEsSelector, es as u64);
+        self.write(VmcsField::GuestFsSelector, fs as u64);
+        self.write(VmcsField::GuestGsSelector, gs as u64);
+        self.write(VmcsField::GuestSsSelector, ss as u64);
+        self.write(VmcsField::GuestLdtrSelector, ldtr);
+        self.write(VmcsField::GuestTrSelector, tr);
 
         // 32 bit guest state fields
-        let gdtr = sgdt();
-        let idtr = sidt();
+        let gdtr = unsafe {
+            let limit = *(&uefi_gdtr as *const u8 as *const u16);
+            let base = *((&uefi_gdtr as *const u8).offset(2) as *const u64);
+            let gdtr = DescriptorTablePointer {
+                limit,
+                base: VirtAddr::new(base),
+            };
+            gdtr
+        };
+        let idtr = unsafe {
+            let limit = *(&uefi_idtr as *const u8 as *const u16);
+            let base = *((&uefi_idtr as *const u8).offset(2) as *const u64);
+            let idtr = DescriptorTablePointer {
+                limit,
+                base: VirtAddr::new(base),
+            };
+            idtr
+        };
         let gdtr_limit = gdtr.limit;
         let idtr_limit = idtr.limit;
         let sysenter_cs = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_CS).read() };
@@ -143,15 +181,23 @@ impl VmcsRegion {
         let cr3_tuple = Cr3::read_raw();
         let cr3 = cr3_tuple.0.start_address().as_u64() | (cr3_tuple.1 as u64);
         let cr4 = Cr4::read_raw();
-        let ldtr_base = SegmentDescriptor::base(&ldtr);
-        let tr_base = SegmentDescriptor::base(&tr);
+        // let ldtr_base = SegmentDescriptor::base(&ldtr);
+        // let tr_base = SegmentDescriptor::base(&tr);
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let dr7 = Dr7::read_raw();
-        let rflags = (rflags::read_raw() & !(1 << 17)) | (1 << 9); // VM(bit 17) must be 0, IF(bit 9) must be 1
+        // VM(bit 17) must be 0, IF(bit 9) must be 1, IF is 0
+        let rflags =
+            (rflags::read_raw() & !(1 << 17 | rflags::RFlags::INTERRUPT_FLAG.bits())) | (1 << 9);
         let sysenter_esp = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_ESP).read() };
         let sysenter_eip = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_EIP).read() };
+        let rsp = unsafe { uefi_rsp };
         let rip = unsafe { &entry_ret as *const u8 as u64 };
+        // let rip = unsafe {
+        //     &entry_ret as *const u8 as u64 as i64
+        //         + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset
+        // } as u64;
+        // let cr3 = unsafe { BOOT_ARGS.as_ptr().as_ref().unwrap().uefi_cr3.as_u64() };
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
         self.write(VmcsField::GuestCr4, cr4);
@@ -161,12 +207,12 @@ impl VmcsRegion {
         self.write(VmcsField::GuestFsBase, 0);
         self.write(VmcsField::GuestGsBase, 0);
         self.write(VmcsField::GuestSsBase, 0);
-        self.write(VmcsField::GuestLdtrBase, ldtr_base as u64);
-        self.write(VmcsField::GuestTrBase, tr_base as u64);
+        self.write(VmcsField::GuestLdtrBase, 0);
+        self.write(VmcsField::GuestTrBase, 0);
         self.write(VmcsField::GuestGdtrBase, gdtr_base);
         self.write(VmcsField::GuestIdtrBase, idtr_base);
         self.write(VmcsField::GuestDr7, dr7);
-        self.write(VmcsField::GuestRsp, 0xdeadbeef);
+        self.write(VmcsField::GuestRsp, rsp);
         self.write(VmcsField::GuestRip, rip);
         self.write(VmcsField::GuestRflags, rflags);
         self.write(VmcsField::GuestSysenterEsp, sysenter_esp);
@@ -323,6 +369,7 @@ impl VmcsRegion {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum VmcsField {
     GuestEsSelector = 0x00000800,

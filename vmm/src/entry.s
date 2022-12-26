@@ -32,8 +32,11 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     .byte   0x48                        # REX.W prefix
     ljmpl   *(%rax)
 entry_ret:
-    mov     uefi_rsp(%rip), %rsp
-    call    restore_uefi_regs
+    # mov     uefi_rsp(%rip), %rsp
+    # call    restore_uefi_regs
+    # mov     (%rsp), %rax
+    # cli
+    # hlt
     ret
 
 .align      16
@@ -93,13 +96,15 @@ restore_uefi_regs:
     lidt    (%rax)
     lea     uefi_ldtr(%rip), %rax
     lldt    (%rax)
+    mov     uefi_es(%rip), %es
     xor     %rax, %rax
     mov     uefi_cs(%rip), %ax
     push    %rax
     lea     1f(%rip), %rax
     push    %rax
     lretq
-1:  mov     uefi_ds(%rip), %ds
+1:
+    mov     uefi_ds(%rip), %ds
     mov     uefi_es(%rip), %es
     mov     uefi_fs(%rip), %fs
     mov     uefi_gs(%rip), %gs
@@ -128,6 +133,12 @@ restore_uefi_regs:
     pop     %rcx
     pop     %rax
     ret
+
+.align      16
+restore_uefi_regs_ljmp_rip:
+    .quad   0                           # rip
+restore_uefi_regs_ljmp_cs:
+    .quad   0                           # cs
 
 .global     init_vmm_regs
 init_vmm_regs:
@@ -191,17 +202,20 @@ call_uefi_write_char:
     mov     %rsi, %r9
     mov     uefi_cr3(%rip), %rbx
     lea     3f(%rip), %rax
-    # because vmm_physoff is i64, check whether positive of negative
+    # because vmm_physoff is i64, must check whether positive of negative
     mov     vmm_physoff(%rip), %rdi
     shr     $63, %rdi
     cmp     $1, %rdi
     jne     1f
     # negative
-    add     %rdi, %rax
+    mov     vmm_physoff(%rip), %rdi
+    neg     %rdi
+    sub     %rdi, %rax
     jmp     2f
 1:
     # positive
-    sub     %rdi, %rax
+    mov     vmm_physoff(%rip), %rdi
+    add     %rdi, %rax
 2:
     jmp     *%rax
 3:
@@ -238,33 +252,71 @@ call_uefi_write_char:
     pop     %rbp
     ret
 
+.global     vmexit_handler
+vmexit_handler:
+    # save guest general register
+    push    %rbp
+    push    %rax
+    push    %rbx
+    push    %rcx
+    push    %rdx
+    push    %rdi
+    push    %rsi
+    push    %r8
+    push    %r9
+    push    %r10
+    push    %r11
+    push    %r12
+    push    %r13
+    push    %r14
+    push    %r15
+    mov     %rsp, %rdi
+    call    resume_vm
+    # restore guest general register
+    pop     %r15
+    pop     %r14
+    pop     %r13
+    pop     %r12
+    pop     %r11
+    pop     %r10
+    pop     %r9
+    pop     %r8
+    pop     %rsi
+    pop     %rdi
+    pop     %rdx
+    pop     %rcx
+    pop     %rbx
+    pop     %rax
+    pop     %rbp
+    vmresume
+
 # ===== UEFI special registers =====
-.align      2
+.align      8
 .global     uefi_cs
 uefi_cs:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_ds
 uefi_ds:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_es
 uefi_es:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_fs
 uefi_fs:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_gs
 uefi_gs:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_ss
 uefi_ss:
     .short  0
@@ -299,17 +351,17 @@ uefi_gdtr:
 uefi_idtr:
     .space  16
 
-.align      2
+.align      8
 .global     uefi_ldtr
 uefi_ldtr:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_tr
 uefi_tr:
     .short  0
 
-.align      2
+.align      8
 .global     uefi_msr_ia32_sysenter_cs
 uefi_msr_ia32_sysenter_cs:
     .short  0

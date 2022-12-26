@@ -47,12 +47,7 @@ impl EptPointer {
     }
 }
 
-// #[repr(u64)]
-// pub enum MemoryType {
-//     Uncacheable = 0,
-//     Writeback = 6,
-// }
-
+#[derive(Debug)]
 pub struct EptTable(*mut u8);
 
 impl EptTable {
@@ -97,6 +92,7 @@ impl IndexMut<usize> for EptTable {
     }
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct EptTableEntry(u64);
 
@@ -164,22 +160,35 @@ pub fn init_ept() -> EptPointer {
 
     ept_pml4[0].set_addr(ept_pdpt.paddr());
     ept_pml4[0].set_flags(
-        EptTableFlags::READ_ACCESS
-            | EptTableFlags::WRITE_ACCESS
-            | EptTableFlags::EXECUTE_ACCESS
-            | EptTableFlags::SUPPRESS_VE,
+        EptTableFlags::READ_ACCESS | EptTableFlags::WRITE_ACCESS | EptTableFlags::EXECUTE_ACCESS,
     );
 
-    for i in 0..(memory_size_gb as usize) {
-        ept_pdpt[i].set_addr(PhysAddr::new(1024 * 1024 * 1024 * (i as u64)));
-        ept_pdpt[i].set_flags(
-            EptTableFlags::HUGE_PAGE
-                | EptTableFlags::READ_ACCESS
+    for i_pdpt in 0..(memory_size_gb as usize) {
+        let mut ept_pdt = EptTable::new();
+
+        ept_pdpt[i_pdpt].set_addr(ept_pdt.paddr());
+        ept_pdpt[i_pdpt].set_flags(
+            EptTableFlags::READ_ACCESS
                 | EptTableFlags::WRITE_ACCESS
-                | EptTableFlags::EXECUTE_ACCESS
-                | EptTableFlags::MEMORY_TYPE_WB
-                | EptTableFlags::SUPPRESS_VE,
-        )
+                | EptTableFlags::EXECUTE_ACCESS,
+        );
+
+        for i_pdt in 0..512 {
+            ept_pdt[i_pdt].set_addr(PhysAddr::new(
+                (2 * 1024 * 1024 * i_pdt as u64) + (1024 * 1024 * 1024 * i_pdpt as u64),
+            ));
+            ept_pdt[i_pdt].set_flags(
+                EptTableFlags::HUGE_PAGE
+                    | EptTableFlags::READ_ACCESS
+                    | EptTableFlags::WRITE_ACCESS
+                    | EptTableFlags::EXECUTE_ACCESS
+                    | EptTableFlags::MEMORY_TYPE_WB,
+            );
+        }
+
+        // if i_pdpt == 0 {
+        //     ept_pdt[0].set_flags(EptTableFlags::HUGE_PAGE | EptTableFlags::MEMORY_TYPE_WB);
+        // }
     }
 
     let mut eptp = EptPointer::new();

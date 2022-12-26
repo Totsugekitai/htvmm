@@ -26,11 +26,12 @@ pub unsafe extern "sysv64" fn vmm_main(boot_args: *const BootArgs) {
     UEFI_WRITE_CHAR.store(BOOT_ARGS.as_ptr().as_ref().unwrap().uefi_write_char);
     allocator::init(VMM_HEAP_HEAD_VADDR, VMM_HEAP_SIZE as usize);
 
-    println!("VMM init complete");
+    uefi_println!("VMM init complete");
 
     let mut intel = IntelCpu::new();
 
-    if let Err(_e) = intel.enable_virtualization() {
+    if let Err(e) = intel.enable_virtualization() {
+        uefi_println!("failed to enable virtualization: {:?}", e);
         panic!();
     }
     intel.init_as_bsp();
@@ -74,12 +75,12 @@ fn _print(args: core::fmt::Arguments) {
 }
 
 #[macro_export]
-macro_rules! print {
+macro_rules! uefi_print {
     ($($arg:tt)*) => ($crate::_print(core::format_args!($($arg)*)));
 }
 
 #[macro_export]
-macro_rules! println {
+macro_rules! uefi_println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::_print(core::format_args!("{}{}", core::format_args!($($arg)*), "\n")));
 }

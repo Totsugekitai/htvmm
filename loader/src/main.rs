@@ -169,6 +169,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         );
         x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
     }
+    x86_64::instructions::hlt();
     x86_64::instructions::interrupts::enable();
 
     halt("VMM boot OK!");
@@ -178,6 +179,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
 
 fn halt(error_msg: &str) -> ! {
     println!("{error_msg}");
+    x86_64::instructions::interrupts::disable();
     loop {
         x86_64::instructions::hlt();
     }
