@@ -1,13 +1,16 @@
 use crate::{
     arch::intel::{
         vmcs::{VmcsField, VmcsRegion},
-        BSP,
+        IntelCpu, BSP,
     },
-    uefi_println, BOOT_ARGS,
+    cpu::Cpu,
+    emu::decode_one,
+    serial_print, serial_println, BOOT_ARGS,
 };
-use alloc::alloc::alloc;
+use alloc::{alloc::alloc, string::String};
 use common::constants;
 use core::{alloc::Layout, arch::asm, ptr, slice};
+use iced_x86::Formatter;
 use x86_64::{
     registers::{
         control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
@@ -117,16 +120,6 @@ unsafe fn asm_vmlaunch() -> Result<(), VmxError> {
     asm!("vmlaunch; pushfq; pop rax", out("rax") flags);
     check_vmx_error(flags)
 }
-
-// pub unsafe fn vmresume() -> Result<(), VmxError> {
-//     asm_vmresume()
-// }
-
-// unsafe fn asm_vmresume() -> Result<(), VmxError> {
-//     let mut flags;
-//     asm!("vmresume; pushfq; pop rax", out("rax") flags);
-//     check_vmx_error(flags)
-// }
 
 fn check_vmx_error(flags: u64) -> Result<(), VmxError> {
     let cf = (flags & 0b1) == 1;
@@ -249,7 +242,8 @@ enum VmExitReason {
     Loadiwkey = 69,
 }
 
-#[repr(C, packed)]
+#[derive(Debug)]
+#[repr(C)]
 pub struct VmExitGeneralPurposeRegister {
     pub r15: u64,
     pub r14: u64,
@@ -270,19 +264,95 @@ pub struct VmExitGeneralPurposeRegister {
 
 pub fn handle_vmexit(reason: u64, qual: u64, gpr: *mut VmExitGeneralPurposeRegister) {
     let reason = unsafe { core::mem::transmute(reason) };
-    uefi_println!("{reason:?}, qualification: 0x{qual:x}");
-    match reason {
-        VmExitReason::TripleFault => x86_64::instructions::hlt(),
-        VmExitReason::EptViolation => {
-            let cpu = unsafe { BSP.as_ptr().as_ref().unwrap() };
-            let rip = cpu.vmcs_region.read(VmcsField::GuestRip);
-            uefi_println!("RIP: {rip:x}");
+    serial_println!("{reason:?}, qualification: 0x{qual:x}");
+    let cpu = unsafe { BSP.as_ptr().as_ref().unwrap() };
+    let gpr = unsafe { gpr.as_mut().unwrap() };
+    // let gpr_const = unsafe {
+    //     (gpr as *const VmExitGeneralPurposeRegister)
+    //         .as_ref()
+    //         .unwrap()
+    // };
+    let rsp = cpu.vmcs_region.read(VmcsField::GuestRsp);
+    let rip = cpu.vmcs_region.read(VmcsField::GuestRip);
+    let rflags = cpu.vmcs_region.read(VmcsField::GuestRflags);
+    serial_println!(
+        "rax: 0x{:016x} rbx: 0x{:016x} rcx: 0x{:016x} rdx: 0x{:016x}",
+        gpr.rax,
+        gpr.rbx,
+        gpr.rcx,
+        gpr.rdx
+    );
+    serial_println!(
+        "rsi: 0x{:016x} rdi: 0x{:016x} rsp: 0x{:016x} rbp: 0x{:016x}",
+        gpr.rsi,
+        gpr.rdi,
+        rsp,
+        gpr.rbp
+    );
+    serial_println!(
+        " r8: 0x{:016x}  r9: 0x{:016x} r10: 0x{:016x} r11: 0x{:016x}",
+        gpr.r8,
+        gpr.r9,
+        gpr.r10,
+        gpr.r11
+    );
+    serial_println!(
+        "r12: 0x{:016x} r13: 0x{:016x} r14: 0x{:016x} r15: 0x{:016x}",
+        gpr.r12,
+        gpr.r13,
+        gpr.r14,
+        gpr.r15
+    );
+    serial_println!("rip: 0x{:016x} rflags: 0x{:016x}", rip, rflags);
 
-            unsafe {
-                asm!("mov r15, {}; hlt", in(reg) rip);
+    match reason {
+        VmExitReason::TripleFault => {
+            x86_64::instructions::hlt();
+        }
+        VmExitReason::EptViolation => {
+            use iced_x86::{Decoder, DecoderOptions, GasFormatter, Instruction};
+            let code = unsafe { core::slice::from_raw_parts(rip as *const u8, 0x50) };
+            let mut decoder = Decoder::with_ip(64, code, rip, DecoderOptions::NONE);
+            let mut formatter = GasFormatter::new();
+            let mut output = String::new();
+            let mut instruction = Instruction::default();
+            while decoder.can_decode() {
+                decoder.decode_out(&mut instruction);
+                output.clear();
+                formatter.format(&instruction, &mut output);
+                serial_print!("{:016x} ", instruction.ip());
+                let start_index = (instruction.ip() - rip) as usize;
+                let instr_bytes = &code[start_index..(start_index + instruction.len())];
+                for b in instr_bytes.iter() {
+                    serial_print!("{:02x} ", b);
+                }
+                if instr_bytes.len() < 10 {
+                    for _ in 0..(10 - instr_bytes.len()) {
+                        serial_print!("   ");
+                    }
+                }
+                serial_println!(" {output}");
+            }
+            x86_64::instructions::hlt();
+        }
+        VmExitReason::CrAccess => {
+            let cr3 = cpu.vmcs_region.read(VmcsField::GuestCr3);
+            serial_println!("before CR3: {cr3:x}");
+            handle_cr_access(qual, gpr);
+        }
+        VmExitReason::ExceptionOrNmi => {
+            let vmexit_intr_info = cpu.vmcs_region.read(VmcsField::VmExitIntrInfo);
+            let vector = vmexit_intr_info & 0b11111111;
+            let intr_type = (vmexit_intr_info & 0b11100000000) >> 8;
+            let error_code_valid = ((vmexit_intr_info & 0b100000000000) >> 11) == 1;
+            serial_println!("Interruption vector: {vector}");
+            serial_println!("Interruption type number: {intr_type}");
+            if error_code_valid {
+                let error_code = cpu.vmcs_region.read(VmcsField::VmExitIntrErrorCode);
+                serial_println!("Error code: {error_code}");
             }
         }
-        VmExitReason::CrAccess => handle_cr_access(qual, gpr),
+        VmExitReason::Cpuid => handle_cpuid(gpr),
         _ => x86_64::instructions::hlt(),
     }
 }
@@ -292,10 +362,11 @@ fn handle_cr_access(qual: u64, gpr: *mut VmExitGeneralPurposeRegister) {
     let access_type = (qual & 0b110000) >> 4;
     let lmsw_operand_size = (qual & 0b1000000) >> 6;
     let gpr_for_mov = (qual & 0b111100000000) >> 8;
+    serial_println!("[CR{cr_number}] ACCESS TYPE: {access_type}, GPR: {gpr_for_mov}");
     match cr_number {
-        0 => handle_cr0_access(access_type, lmsw_operand_size, gpr_for_mov),
+        0 => panic!(), //handle_cr0_access(access_type, lmsw_operand_size, gpr_for_mov),
         3 => handle_cr3_access(access_type, gpr_for_mov, gpr),
-        4 => handle_cr4_access(access_type, gpr_for_mov),
+        4 => panic!(), // handle_cr4_access(access_type, gpr_for_mov),
         _ => panic!(),
     }
 }
@@ -341,8 +412,17 @@ fn handle_cr4_access(access_type: u64, gpr_for_mov: u64) {}
 fn handle_mov_to_cr3(value: u64) {
     let bsp = unsafe { BSP.as_ptr().as_mut().unwrap() };
     bsp.vmcs_region.write(VmcsField::GuestCr3, value);
+    serial_println!("after CR3: {value:x}");
     let rip = bsp.vmcs_region.read(VmcsField::GuestRip);
-    bsp.vmcs_region.write(VmcsField::GuestRip, rip + 3);
+    let instruction = decode_one(rip);
+    if instruction.is_err() {
+        serial_println!("decode error");
+        panic!();
+    }
+    let instruction = instruction.unwrap();
+    serial_println!("instruction len: {}", instruction.len());
+    bsp.vmcs_region
+        .write(VmcsField::GuestRip, rip + instruction.len() as u64);
 }
 
 fn handle_mov_from_cr3(gpr_for_mov: u64, gpr: &mut VmExitGeneralPurposeRegister) {
@@ -368,5 +448,26 @@ fn handle_mov_from_cr3(gpr_for_mov: u64, gpr: &mut VmExitGeneralPurposeRegister)
         _ => panic!(),
     };
     let rip = bsp.vmcs_region.read(VmcsField::GuestRip);
-    bsp.vmcs_region.write(VmcsField::GuestRip, rip + 3);
+    let instruction = decode_one(rip);
+    if instruction.is_err() {
+        serial_println!("decode error");
+        panic!();
+    }
+    let instruction = instruction.unwrap();
+    serial_println!("instruction len: {}", instruction.len());
+    bsp.vmcs_region
+        .write(VmcsField::GuestRip, rip + instruction.len() as u64);
+}
+
+fn handle_cpuid(gpr: &mut VmExitGeneralPurposeRegister) {
+    let rax = gpr.rax;
+    let cpuid = IntelCpu::cpuid(rax as u32);
+    gpr.rax = (rax & !0xffff_ffff) | cpuid.eax as u64;
+    gpr.rbx = (gpr.rbx & !0xffff_ffff) | cpuid.ebx as u64;
+    gpr.rcx = (gpr.rcx & !0xffff_ffff) | cpuid.ecx as u64;
+    gpr.rdx = (gpr.rdx & !0xffff_ffff) | cpuid.edx as u64;
+
+    let bsp = unsafe { BSP.as_ptr().as_mut().unwrap() };
+    let rip = bsp.vmcs_region.read(VmcsField::GuestRip);
+    bsp.vmcs_region.write(VmcsField::GuestRip, rip + 2);
 }

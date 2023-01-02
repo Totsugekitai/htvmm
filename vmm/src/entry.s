@@ -32,11 +32,6 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     .byte   0x48                        # REX.W prefix
     ljmpl   *(%rax)
 entry_ret:
-    # mov     uefi_rsp(%rip), %rsp
-    # call    restore_uefi_regs
-    # mov     (%rsp), %rax
-    # cli
-    # hlt
     ret
 
 .align      16
@@ -289,6 +284,48 @@ vmexit_handler:
     pop     %rax
     pop     %rbp
     vmresume
+
+.global     asm_init_serial     # fn asm_init_serial(base: u16);
+asm_init_serial:
+    push    %rdx
+    push    %rax
+    xor     %rdx, %rdx
+    mov     $0x2f9, %dx
+    mov     $0x00, %al
+    out     %al, %dx            # disable all interrupts
+    mov     $0x2fb, %dx
+    mov     $0x80, %al
+    out     %al, %dx            # enable dlab(set baud rate divisor)
+    mov     $0x2f8, %dx
+    mov     $0x01, %al
+    out     %al, %dx            # set divisor to 1 (lo byte) 115200 baud
+    mov     $0x2f9, %dx
+    mov     $0x00, %al
+    out     %al, %dx            # (hi byte)
+    mov     $0x2fb, %dx
+    mov     $0x03, %al
+    out     %al, %dx            # 8 bits, no parity, one stop bit
+    mov     $0x2fa, %dx
+    mov     $0xc7, %al
+    out     %al, %dx            # enable fifo, clear them, with 14-byte threshold
+    mov     $0x2fc, %dx
+    mov     $0x0b, %al
+    out     %al, %dx            # IRQs enabled, RTS/DSR set
+    mov     $0x2fc, %dx
+    mov     $0x1e, %al
+    out     %al, %dx            # set in loopback mode, test the serial chip
+    pop     %rax
+    pop     %rdx
+    ret
+
+.global     asm_serial_output_char
+asm_serial_output_char:
+    mov     %rdi, %rax
+    mov     $0x2f8, %dx
+    out     %al, %dx
+    mov     $0x3f8, %dx
+    out     %al, %dx
+    ret
 
 # ===== UEFI special registers =====
 .align      8

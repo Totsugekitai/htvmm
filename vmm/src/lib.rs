@@ -4,6 +4,9 @@
 mod allocator;
 mod arch;
 mod cpu;
+mod emu;
+mod ioapic;
+mod serial;
 
 extern crate alloc;
 
@@ -26,12 +29,14 @@ pub unsafe extern "sysv64" fn vmm_main(boot_args: *const BootArgs) {
     UEFI_WRITE_CHAR.store(BOOT_ARGS.as_ptr().as_ref().unwrap().uefi_write_char);
     allocator::init(VMM_HEAP_HEAD_VADDR, VMM_HEAP_SIZE as usize);
 
-    uefi_println!("VMM init complete");
+    serial::init(serial::COM);
+
+    serial_println!("VMM init complete");
 
     let mut intel = IntelCpu::new();
 
     if let Err(e) = intel.enable_virtualization() {
-        uefi_println!("failed to enable virtualization: {:?}", e);
+        serial_println!("failed to enable virtualization: {:?}", e);
         panic!();
     }
     intel.init_as_bsp();
@@ -49,6 +54,7 @@ extern "C" {
     static __bss: u8;
     static __bss_end: u8;
     fn call_uefi_write_char(fp: u64, output: u64, c: u32);
+    // fn asm_serial_output_char(c: u32);
 }
 
 unsafe fn clear_bss() {
@@ -74,13 +80,23 @@ fn _print(args: core::fmt::Arguments) {
     }
 }
 
-#[macro_export]
-macro_rules! uefi_print {
-    ($($arg:tt)*) => ($crate::_print(core::format_args!($($arg)*)));
+fn _print_serial(args: core::fmt::Arguments) {
+    let s = format(args);
+    let s = s.as_str();
+    for c in s.chars() {
+        unsafe {
+            serial::write(serial::COM, c as u8);
+        }
+    }
 }
 
 #[macro_export]
-macro_rules! uefi_println {
-    () => ($crate::print!("\n"));
-    ($($arg:tt)*) => ($crate::_print(core::format_args!("{}{}", core::format_args!($($arg)*), "\n")));
+macro_rules! serial_print {
+    ($($arg:tt)*) => ($crate::_print_serial(core::format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! serial_println {
+    () => ($crate::print!("\r\n"));
+    ($($arg:tt)*) => ($crate::_print_serial(core::format_args!("{}{}", core::format_args!($($arg)*), "\r\n")));
 }

@@ -5,3 +5,4 @@ tools/
 
 *.elf*
 .gdb_history
+disk.iso

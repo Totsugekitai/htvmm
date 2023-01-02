@@ -17,8 +17,10 @@ QEMUFLAGS := -s -m 8G \
 -drive if=pflash,format=raw,readonly,file=tools/ovmf/OVMF_CODE.fd \
 -drive if=pflash,format=raw,file=tools/ovmf/OVMF_VARS.fd \
 -drive if=ide,file=fat:rw:image,index=0,media=disk \
--monitor stdio \
--enable-kvm -cpu host,+vmx
+-drive format=raw,file=disk.iso \
+-enable-kvm -cpu host,+vmx \
+-serial stdio
+#-monitor stdio
 
 .PHONY: default
 default: build
@@ -56,6 +58,12 @@ run:
 > cp vmm/htvmm.elf.$(build_mode) image/htvmm.elf
 > cp loader/target/x86_64-unknown-uefi/$(build_mode)/htloader.efi image/EFI/BOOT/BOOTX64.EFI
 > $(QEMU) $(QEMUFLAGS)
+
+.PHONY: disk
+disk:
+> rm -f disk.iso && \
+grub-mkrescue -o disk.iso /boot && \
+chmod 666 disk.iso
 
 .PHONY: init
 init:

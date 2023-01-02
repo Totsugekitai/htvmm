@@ -10,6 +10,7 @@ extern crate alloc;
 use crate::paging::create_page_table;
 use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE};
 use core::{arch::asm, fmt::Write};
+use crossbeam::atomic::AtomicCell;
 use goblin::elf;
 use uefi::{
     data_types::Align,
@@ -22,12 +23,17 @@ use uefi::{
     CStr16,
 };
 use uefi_services::{self, println};
-use x86_64::{structures::paging::PhysFrame, PhysAddr};
+use x86_64::{registers::control::Cr3Flags, structures::paging::PhysFrame, PhysAddr};
 
 const VMM_FILE_NAME: &'static str = "htvmm.elf";
 const PAGE_SIZE: usize = 0x1000;
 pub const MAX_ADDRESS: usize = 0x4000_0000;
 pub const VMM_ENTRY_VADDR: usize = 0x1_0000_1000;
+
+static UEFI_CR3: AtomicCell<(PhysFrame, Cr3Flags)> = AtomicCell::new((
+    unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(0)) },
+    Cr3Flags::empty(),
+));
 
 #[entry]
 fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
@@ -106,6 +112,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let vmm_entry_offset = vmm_elf.program_headers[0].p_offset; // FIXME!!!
 
     let (uefi_cr3, uefi_cr3_flags) = x86_64::registers::control::Cr3::read();
+    UEFI_CR3.store((uefi_cr3, uefi_cr3_flags));
     let uefi_cr3_u64 = uefi_cr3.start_address().as_u64();
     let boot_args = BootArgs {
         uefi_cr3: PhysAddr::new(uefi_cr3_u64),
@@ -128,9 +135,10 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
             PhysFrame::from_start_address(PhysAddr::new(vmm_pml4_table.as_u64())).unwrap(),
             cr3_flags,
         );
-    }
 
-    unsafe {
+        // let vmm_entry: extern "sysv64" fn(*const BootArgs) = core::mem::transmute(VMM_ENTRY_VADDR);
+        // vmm_entry(&boot_args as *const BootArgs);
+
         asm!(
             "push %rax",
             "push %rbx",
@@ -167,14 +175,16 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
             vmm_entry = in(reg) VMM_ENTRY_VADDR,
             options(att_syntax)
         );
+
+        let (uefi_cr3, uefi_cr3_flags) = UEFI_CR3.load();
         x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
     }
-    x86_64::instructions::hlt();
     x86_64::instructions::interrupts::enable();
 
-    halt("VMM boot OK!");
+    // halt("VMM boot OK!");
 
-    // Status::SUCCESS
+    // println!("VMM boot OK!");
+    Status::SUCCESS
 }
 
 fn halt(error_msg: &str) -> ! {

@@ -1,11 +1,11 @@
 mod ept;
 mod vmcs;
-mod vmx;
+pub mod vmx;
 
 use crate::{
     arch::intel::vmx::VmExitGeneralPurposeRegister,
     cpu::{Cpu, CpuError},
-    uefi_println,
+    serial_println,
 };
 use core::arch::asm;
 use crossbeam::atomic::AtomicCell;
@@ -102,31 +102,9 @@ unsafe fn resume_vm(gpr: *mut VmExitGeneralPurposeRegister) {
     let exit_reason = cpu.vmcs_region.read(VmcsField::VmExitReason);
     let exit_qual = cpu.vmcs_region.read(VmcsField::ExitQualification);
 
-    // uefi_println!("VMExit!!!!!");
-    // uefi_println!("reason: {exit_reason}, qualification: {exit_qual:x}");
-
-    let guest_rsp = cpu.vmcs_region.read(VmcsField::GuestRsp);
-    let guest_rip = cpu.vmcs_region.read(VmcsField::GuestRip);
-
-    uefi_println!("guest_rsp: {:x}, guest_rip: {:x}", guest_rsp, guest_rip);
-
-    // asm!(
-    //     "mov r14, {rsp}",
-    //     "mov r15, {rip}",
-    //     "hlt",
-    //     rsp = in(reg) guest_rsp,
-    //     rip = in(reg) guest_rip,
-    // );
+    serial_println!("=== VMExit!!!!! ===");
 
     handle_vmexit(exit_reason, exit_qual, gpr);
 
-    // if let Err(e) = vmresume() {
-    //     match e {
-    //         VmxError::InvalidPointer => panic!(),
-    //         VmxError::VmInstructionError => {
-    //             let error_code = cpu.vmcs_region.read(VmcsField::VmInstructionError);
-    //             asm!("mov r15, {}; hlt", in(reg) error_code, options(readonly, nostack, preserves_flags));
-    //         }
-    //     }
-    // }
+    serial_println!("=== VMEntry!!!! ===");
 }

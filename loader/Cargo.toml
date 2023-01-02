@@ -12,5 +12,6 @@ goblin = { version = "0.5.4", default-features = false, features = [
     "elf32",
 ] }
 x86_64 = "0.14.10"
+crossbeam = { version = "0.8.2", default-features = false }
 
 common = { path = "../common" }

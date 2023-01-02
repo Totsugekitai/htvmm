@@ -186,18 +186,12 @@ impl VmcsRegion {
         let gdtr_base = gdtr.base.as_u64();
         let idtr_base = idtr.base.as_u64();
         let dr7 = Dr7::read_raw();
-        // VM(bit 17) must be 0, IF(bit 9) must be 1, IF is 0
-        let rflags =
-            (rflags::read_raw() & !(1 << 17 | rflags::RFlags::INTERRUPT_FLAG.bits())) | (1 << 9);
+        // VM(bit 17) must be 0, IF(bit 9) is 0
+        let rflags = rflags::read_raw() & !(1 << 17 | 1 << 9);
         let sysenter_esp = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_ESP).read() };
         let sysenter_eip = unsafe { Msr::new(constants::MSR_IA32_SYSENTER_EIP).read() };
         let rsp = unsafe { uefi_rsp };
         let rip = unsafe { &entry_ret as *const u8 as u64 };
-        // let rip = unsafe {
-        //     &entry_ret as *const u8 as u64 as i64
-        //         + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset
-        // } as u64;
-        // let cr3 = unsafe { BOOT_ARGS.as_ptr().as_ref().unwrap().uefi_cr3.as_u64() };
         self.write(VmcsField::GuestCr0, cr0);
         self.write(VmcsField::GuestCr3, cr3);
         self.write(VmcsField::GuestCr4, cr4);
@@ -321,7 +315,7 @@ impl VmcsRegion {
         self.write(
             VmcsField::ProcBasedVmExecControls,
             proc_based_ctls
-                | VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT
+                // | VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT
                 | VMCS_PROC_BASED_VMEXEC_CTLS_ACTIVE_SECOND_CTLS,
         );
         self.write(
