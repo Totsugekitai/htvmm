@@ -1,5 +1,4 @@
-#[repr(C)]
-#[derive(Debug)]
+#[repr(C, packed)]
 struct IoApic {
     reg: u32,
     pad: [u32; 3],

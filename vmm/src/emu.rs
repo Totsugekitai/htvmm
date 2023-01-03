@@ -1,4 +1,4 @@
-use crate::arch::intel::{vmx::VmExitGeneralPurposeRegister, BSP};
+// use crate::arch::intel::vmx::VmExitGeneralPurposeRegister;
 use iced_x86::{Decoder, DecoderOptions, Instruction};
 
 pub fn decode_one(rip: u64) -> Result<Instruction, ()> {
@@ -11,6 +11,6 @@ pub fn decode_one(rip: u64) -> Result<Instruction, ()> {
     }
 }
 
-pub fn emulation_one(rip: u64, gpr: &mut VmExitGeneralPurposeRegister) {
-    let instruction = decode_one(rip).unwrap();
-}
+// pub fn emulation_one(rip: u64, gpr: &mut VmExitGeneralPurposeRegister) {
+//     let instruction = decode_one(rip).unwrap();
+// }

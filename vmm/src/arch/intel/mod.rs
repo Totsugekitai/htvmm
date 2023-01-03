@@ -1,5 +1,6 @@
 mod ept;
 mod vmcs;
+mod vmexit_handlers;
 pub mod vmx;
 
 use crate::{
@@ -38,7 +39,7 @@ impl IntelCpu {
     }
 
     fn is_vmx_supported() -> bool {
-        let cpuid = Self::cpuid(1);
+        let cpuid = Self::cpuid(1, 0);
         let vmx = cpuid.ecx & (1 << 5);
         0 < vmx
     }

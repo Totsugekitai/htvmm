@@ -69,9 +69,7 @@ impl EptTable {
 
     pub fn paddr(&self) -> PhysAddr {
         let virt = i64::try_from(self.as_mut_ptr() as u64).unwrap();
-        let phys = unsafe {
-            u64::try_from(virt + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset).unwrap()
-        };
+        let phys = u64::try_from(virt + BOOT_ARGS.load().vmm_phys_offset).unwrap();
         PhysAddr::new(phys)
     }
 }
@@ -97,14 +95,17 @@ impl IndexMut<usize> for EptTable {
 pub struct EptTableEntry(u64);
 
 impl EptTableEntry {
+    #[allow(unused)]
     pub const fn new() -> Self {
         Self(0)
     }
 
+    #[allow(unused)]
     pub const fn is_unused(&self) -> bool {
         self.0 == 0
     }
 
+    #[allow(unused)]
     pub fn set_unused(&mut self) {
         self.0 = 0;
     }
@@ -149,7 +150,7 @@ bitflags! {
 }
 
 pub fn init_ept() -> EptPointer {
-    let memory_size = unsafe { BOOT_ARGS.as_ptr().as_ref().unwrap().memory_size };
+    let memory_size = BOOT_ARGS.load().memory_size;
     let memory_size_gb = memory_size / (1024 * 1024 * 1024);
 
     let mut ept_pml4 = EptTable::new();

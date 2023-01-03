@@ -17,7 +17,7 @@ QEMUFLAGS := -s -m 8G \
 -drive if=pflash,format=raw,readonly,file=tools/ovmf/OVMF_CODE.fd \
 -drive if=pflash,format=raw,file=tools/ovmf/OVMF_VARS.fd \
 -drive if=ide,file=fat:rw:image,index=0,media=disk \
--drive format=raw,file=disk.iso \
+-drive format=raw,index=1,file=disk.iso \
 -enable-kvm -cpu host,+vmx \
 -serial stdio
 #-monitor stdio

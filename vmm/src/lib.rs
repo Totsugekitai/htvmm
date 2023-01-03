@@ -26,17 +26,17 @@ pub static UEFI_WRITE_CHAR: AtomicCell<u64> = AtomicCell::new(0);
 pub unsafe extern "sysv64" fn vmm_main(boot_args: *const BootArgs) {
     clear_bss();
     BOOT_ARGS.store(*boot_args);
-    UEFI_WRITE_CHAR.store(BOOT_ARGS.as_ptr().as_ref().unwrap().uefi_write_char);
+    UEFI_WRITE_CHAR.store(BOOT_ARGS.load().uefi_write_char);
     allocator::init(VMM_HEAP_HEAD_VADDR, VMM_HEAP_SIZE as usize);
 
-    serial::init(serial::COM);
+    // serial::init(serial::COM);
 
     serial_println!("VMM init complete");
 
     let mut intel = IntelCpu::new();
 
     if let Err(e) = intel.enable_virtualization() {
-        serial_println!("failed to enable virtualization: {:?}", e);
+        serial_println!("failed to enable virtualization: {e:?}");
         panic!();
     }
     intel.init_as_bsp();
@@ -54,7 +54,6 @@ extern "C" {
     static __bss: u8;
     static __bss_end: u8;
     fn call_uefi_write_char(fp: u64, output: u64, c: u32);
-    // fn asm_serial_output_char(c: u32);
 }
 
 unsafe fn clear_bss() {
@@ -68,7 +67,7 @@ unsafe fn clear_bss() {
     }
 }
 
-fn _print(args: core::fmt::Arguments) {
+fn _print_uefi(args: core::fmt::Arguments) {
     let uefi_write_char = UEFI_WRITE_CHAR.load();
     let output = BOOT_ARGS.load().uefi_output;
     let s = format(args);
@@ -90,6 +89,15 @@ fn _print_serial(args: core::fmt::Arguments) {
     }
 }
 
+fn _print_serial_asm(args: core::fmt::Arguments) {
+    for c in format(args).as_str().chars() {
+        unsafe {
+            use core::arch::asm;
+            asm!("out dx, al", in("dx") 0x3e8, in("al") c as u8, options(nomem, nostack));
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! serial_print {
     ($($arg:tt)*) => ($crate::_print_serial(core::format_args!($($arg)*)));
@@ -97,6 +105,17 @@ macro_rules! serial_print {
 
 #[macro_export]
 macro_rules! serial_println {
-    () => ($crate::print!("\r\n"));
+    () => ($crate::serial_print!("\r\n"));
     ($($arg:tt)*) => ($crate::_print_serial(core::format_args!("{}{}", core::format_args!($($arg)*), "\r\n")));
+}
+
+#[macro_export]
+macro_rules! uefi_print {
+    ($($arg:tt)*) => ($crate::_print_uefi(core::format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! uefi_println {
+    () => ($crate::uefi_print!("\r\n"));
+    ($($arg:tt)*) => ($crate::_print_uefi(core::format_args!("{}{}", core::format_args!($($arg)*), "\r\n")));
 }

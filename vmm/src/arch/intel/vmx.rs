@@ -1,7 +1,7 @@
 use crate::{
     arch::intel::{
         vmcs::{VmcsField, VmcsRegion},
-        IntelCpu, BSP,
+        vmexit_handlers, IntelCpu, BSP,
     },
     cpu::Cpu,
     emu::decode_one,
@@ -100,7 +100,7 @@ unsafe fn asm_vmread(field: VmcsField) -> Result<u64, VmxError> {
 }
 
 pub unsafe fn vmwrite(field: VmcsField, value: u64) {
-    if let Err(e) = asm_vmwrite(field, value) {
+    if let Err(_e) = asm_vmwrite(field, value) {
         panic!();
     }
 }
@@ -170,6 +170,7 @@ pub enum VmxError {
     VmInstructionError,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 enum VmExitReason {
@@ -267,11 +268,6 @@ pub fn handle_vmexit(reason: u64, qual: u64, gpr: *mut VmExitGeneralPurposeRegis
     serial_println!("{reason:?}, qualification: 0x{qual:x}");
     let cpu = unsafe { BSP.as_ptr().as_ref().unwrap() };
     let gpr = unsafe { gpr.as_mut().unwrap() };
-    // let gpr_const = unsafe {
-    //     (gpr as *const VmExitGeneralPurposeRegister)
-    //         .as_ref()
-    //         .unwrap()
-    // };
     let rsp = cpu.vmcs_region.read(VmcsField::GuestRsp);
     let rip = cpu.vmcs_region.read(VmcsField::GuestRip);
     let rflags = cpu.vmcs_region.read(VmcsField::GuestRflags);
@@ -309,37 +305,8 @@ pub fn handle_vmexit(reason: u64, qual: u64, gpr: *mut VmExitGeneralPurposeRegis
         VmExitReason::TripleFault => {
             x86_64::instructions::hlt();
         }
-        VmExitReason::EptViolation => {
-            use iced_x86::{Decoder, DecoderOptions, GasFormatter, Instruction};
-            let code = unsafe { core::slice::from_raw_parts(rip as *const u8, 0x50) };
-            let mut decoder = Decoder::with_ip(64, code, rip, DecoderOptions::NONE);
-            let mut formatter = GasFormatter::new();
-            let mut output = String::new();
-            let mut instruction = Instruction::default();
-            while decoder.can_decode() {
-                decoder.decode_out(&mut instruction);
-                output.clear();
-                formatter.format(&instruction, &mut output);
-                serial_print!("{:016x} ", instruction.ip());
-                let start_index = (instruction.ip() - rip) as usize;
-                let instr_bytes = &code[start_index..(start_index + instruction.len())];
-                for b in instr_bytes.iter() {
-                    serial_print!("{:02x} ", b);
-                }
-                if instr_bytes.len() < 10 {
-                    for _ in 0..(10 - instr_bytes.len()) {
-                        serial_print!("   ");
-                    }
-                }
-                serial_println!(" {output}");
-            }
-            x86_64::instructions::hlt();
-        }
-        VmExitReason::CrAccess => {
-            let cr3 = cpu.vmcs_region.read(VmcsField::GuestCr3);
-            serial_println!("before CR3: {cr3:x}");
-            handle_cr_access(qual, gpr);
-        }
+        VmExitReason::EptViolation => vmexit_handlers::ept_violation(gpr),
+        VmExitReason::CrAccess => handle_cr_access(qual, gpr),
         VmExitReason::ExceptionOrNmi => {
             let vmexit_intr_info = cpu.vmcs_region.read(VmcsField::VmExitIntrInfo);
             let vector = vmexit_intr_info & 0b11111111;
@@ -353,28 +320,33 @@ pub fn handle_vmexit(reason: u64, qual: u64, gpr: *mut VmExitGeneralPurposeRegis
             }
         }
         VmExitReason::Cpuid => handle_cpuid(gpr),
+        // VmExitReason::Rdmsr => vmexit_handlers::rdmsr(gpr),
         _ => x86_64::instructions::hlt(),
     }
 }
 
-fn handle_cr_access(qual: u64, gpr: *mut VmExitGeneralPurposeRegister) {
+fn handle_cr_access(qual: u64, gpr: &mut VmExitGeneralPurposeRegister) {
     let cr_number = qual & 0b1111;
     let access_type = (qual & 0b110000) >> 4;
     let lmsw_operand_size = (qual & 0b1000000) >> 6;
     let gpr_for_mov = (qual & 0b111100000000) >> 8;
-    serial_println!("[CR{cr_number}] ACCESS TYPE: {access_type}, GPR: {gpr_for_mov}");
+    serial_println!("[CR{cr_number}] ACCESS TYPE: {access_type}");
     match cr_number {
-        0 => panic!(), //handle_cr0_access(access_type, lmsw_operand_size, gpr_for_mov),
+        0 => handle_cr0_access(access_type, lmsw_operand_size, gpr_for_mov),
         3 => handle_cr3_access(access_type, gpr_for_mov, gpr),
-        4 => panic!(), // handle_cr4_access(access_type, gpr_for_mov),
+        4 => handle_cr4_access(access_type, gpr_for_mov),
         _ => panic!(),
     }
 }
 
-fn handle_cr0_access(access_type: u64, lmsw_operand_size: u64, gpr_for_mov: u64) {}
+fn handle_cr0_access(_access_type: u64, _lmsw_operand_size: u64, _gpr_for_mov: u64) {
+    panic!();
+}
 
-fn handle_cr3_access(access_type: u64, gpr_for_mov: u64, gpr: *mut VmExitGeneralPurposeRegister) {
-    let gpr = unsafe { gpr.as_mut().unwrap() };
+fn handle_cr3_access(access_type: u64, gpr_for_mov: u64, gpr: &mut VmExitGeneralPurposeRegister) {
+    let bsp = unsafe { BSP.as_ptr().as_ref().unwrap() };
+    let cr3 = bsp.vmcs_region.read(VmcsField::GuestCr3);
+    serial_println!("before CR3: 0x{cr3:016x}");
     let value = match gpr_for_mov {
         0 => gpr.rax,
         1 => gpr.rcx,
@@ -405,14 +377,17 @@ fn handle_cr3_access(access_type: u64, gpr_for_mov: u64, gpr: *mut VmExitGeneral
         1 => handle_mov_from_cr3(gpr_for_mov, gpr),
         _ => panic!(),
     }
+    let cr3 = bsp.vmcs_region.read(VmcsField::GuestCr3);
+    serial_println!(" after CR3: 0x{cr3:016x}");
 }
 
-fn handle_cr4_access(access_type: u64, gpr_for_mov: u64) {}
+fn handle_cr4_access(_access_type: u64, _gpr_for_mov: u64) {
+    panic!();
+}
 
 fn handle_mov_to_cr3(value: u64) {
     let bsp = unsafe { BSP.as_ptr().as_mut().unwrap() };
     bsp.vmcs_region.write(VmcsField::GuestCr3, value);
-    serial_println!("after CR3: {value:x}");
     let rip = bsp.vmcs_region.read(VmcsField::GuestRip);
     let instruction = decode_one(rip);
     if instruction.is_err() {
@@ -420,7 +395,7 @@ fn handle_mov_to_cr3(value: u64) {
         panic!();
     }
     let instruction = instruction.unwrap();
-    serial_println!("instruction len: {}", instruction.len());
+    // serial_println!("instruction len: {}", instruction.len());
     bsp.vmcs_region
         .write(VmcsField::GuestRip, rip + instruction.len() as u64);
 }
@@ -454,17 +429,18 @@ fn handle_mov_from_cr3(gpr_for_mov: u64, gpr: &mut VmExitGeneralPurposeRegister)
         panic!();
     }
     let instruction = instruction.unwrap();
-    serial_println!("instruction len: {}", instruction.len());
+    // serial_println!("instruction len: {}", instruction.len());
     bsp.vmcs_region
         .write(VmcsField::GuestRip, rip + instruction.len() as u64);
 }
 
 fn handle_cpuid(gpr: &mut VmExitGeneralPurposeRegister) {
     let rax = gpr.rax;
-    let cpuid = IntelCpu::cpuid(rax as u32);
+    let rcx = gpr.rcx;
+    let cpuid = IntelCpu::cpuid(rax as u32, rcx as u32);
     gpr.rax = (rax & !0xffff_ffff) | cpuid.eax as u64;
     gpr.rbx = (gpr.rbx & !0xffff_ffff) | cpuid.ebx as u64;
-    gpr.rcx = (gpr.rcx & !0xffff_ffff) | cpuid.ecx as u64;
+    gpr.rcx = (rcx & !0xffff_ffff) | cpuid.ecx as u64;
     gpr.rdx = (gpr.rdx & !0xffff_ffff) | cpuid.edx as u64;
 
     let bsp = unsafe { BSP.as_ptr().as_mut().unwrap() };

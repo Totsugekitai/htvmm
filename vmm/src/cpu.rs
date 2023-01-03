@@ -23,10 +23,10 @@ impl Cpuid {
 }
 
 pub trait Cpu {
-    fn cpuid(eax: u32) -> Cpuid {
+    fn cpuid(eax: u32, ecx: u32) -> Cpuid {
         let mut cpuid = Cpuid::new();
         unsafe {
-            asm!("cpuid","mov rdi, rbx",  inlateout("eax") eax => cpuid.eax, out("rdi") cpuid.ebx, out("ecx") cpuid.ecx, out("edx") cpuid.edx);
+            asm!("cpuid","mov rdi, rbx",  inlateout("eax") eax => cpuid.eax, out("rdi") cpuid.ebx, inlateout("ecx") ecx => cpuid.ecx, out("edx") cpuid.edx);
         }
         cpuid
     }

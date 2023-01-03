@@ -35,7 +35,6 @@ extern "C" {
     static uefi_ldtr: u64;
     static uefi_tr: u64;
     static uefi_rsp: u64;
-    static uefi_cr3: u64;
 }
 
 #[derive(Debug)]
@@ -64,9 +63,7 @@ impl VmcsRegion {
 
     pub fn paddr(&self) -> PhysAddr {
         let virt = i64::try_from(self.as_mut_ptr() as u64).unwrap();
-        let phys = unsafe {
-            u64::try_from(virt + BOOT_ARGS.as_ptr().as_ref().unwrap().vmm_phys_offset).unwrap()
-        };
+        let phys = u64::try_from(virt + BOOT_ARGS.load().vmm_phys_offset).unwrap();
         PhysAddr::new(phys)
     }
 
@@ -100,14 +97,14 @@ impl VmcsRegion {
 
     fn setup_guest_state_area(&mut self) {
         // 16 bit guest state fields
-        let cs = CS::get_reg();
-        let ds = DS::get_reg();
-        let es = ES::get_reg();
-        let fs = FS::get_reg();
-        let gs = GS::get_reg();
-        let ss = SS::get_reg();
-        let ldtr = Ldtr::get_reg();
-        let tr = Tr::get_reg();
+        let _cs = CS::get_reg();
+        let _ds = DS::get_reg();
+        let _es = ES::get_reg();
+        let _fs = FS::get_reg();
+        let _gs = GS::get_reg();
+        let _ss = SS::get_reg();
+        let _ldtr = Ldtr::get_reg();
+        let _tr = Tr::get_reg();
         let cs = unsafe { uefi_cs };
         let ds = unsafe { uefi_ds };
         let es = unsafe { uefi_es };
@@ -311,11 +308,22 @@ impl VmcsRegion {
         let entry_ctls_or = (entry_ctls & 0xffff_ffff) as u32;
         let entry_ctls_and = ((entry_ctls >> 32) & 0xffff_ffff) as u32;
         let entry_ctls = ((0 | entry_ctls_or) & entry_ctls_and) as u64;
+        let msr_bitmap_phys = unsafe {
+            let layout = Layout::from_size_align(4096, 4096).unwrap();
+            let bitmap_region = alloc(layout);
+            let bitmap_slice = core::slice::from_raw_parts_mut(bitmap_region, 4096);
+            bitmap_slice.fill(0);
+            let virt = i64::try_from(bitmap_region as u64).unwrap();
+            let phys = u64::try_from(virt + BOOT_ARGS.load().vmm_phys_offset).unwrap();
+            PhysAddr::new(phys)
+        };
+
         self.write(VmcsField::PinBasedVmExecControls, pin_based_ctls);
         self.write(
             VmcsField::ProcBasedVmExecControls,
             proc_based_ctls
                 // | VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT
+                | VMCS_PROC_BASED_VMEXEC_CTLS_USE_MSR_BITMAPS
                 | VMCS_PROC_BASED_VMEXEC_CTLS_ACTIVE_SECOND_CTLS,
         );
         self.write(
@@ -341,6 +349,7 @@ impl VmcsRegion {
         self.write(VmcsField::VmEntryExceptionErrorCode, 0);
         self.write(VmcsField::VmEntryInstructionLen, 0);
         self.write(VmcsField::TprThreshold, 0);
+        self.write(VmcsField::MsrBitmap, msr_bitmap_phys.as_u64());
 
         // 64 bit control fields
         self.write(VmcsField::VmExitMsrLoadAddr, 0);
@@ -363,6 +372,7 @@ impl VmcsRegion {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum VmcsField {
@@ -505,7 +515,9 @@ pub enum VmcsField {
     HostRip = 0x00006c16,
 }
 
+#[allow(unused)]
 const VMCS_PROC_BASED_VMEXEC_CTLS_HLTEXIT: u64 = 1 << 7;
+const VMCS_PROC_BASED_VMEXEC_CTLS_USE_MSR_BITMAPS: u64 = 1 << 28;
 const VMCS_PROC_BASED_VMEXEC_CTLS_ACTIVE_SECOND_CTLS: u64 = 1 << 31;
 
 const VMCS_PROC_BASED_VMEXEC_CTLS2_ENABLE_EPT: u64 = 1 << 1;
