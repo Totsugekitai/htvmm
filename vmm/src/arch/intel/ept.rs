@@ -45,6 +45,10 @@ impl EptPointer {
     pub fn as_u64(&self) -> u64 {
         self.0
     }
+
+    // pub fn walk_table(&self, guest_phys: PhysAddr) -> *mut EptTableEntry {
+    //     let pml4 = self.addr().as_u64();
+    // }
 }
 
 #[derive(Debug)]
@@ -90,7 +94,41 @@ impl IndexMut<usize> for EptTable {
     }
 }
 
-#[derive(Debug)]
+// #[derive(Clone, Copy, Debug)]
+// #[repr(C, align(4096))]
+// pub struct EptTable {
+//     entries: [EptTableEntry; 512],
+// }
+
+// impl EptTable {
+//     fn new() -> Self {
+//         Self {
+//             entries: [EptTableEntry::new(); 512],
+//         }
+//     }
+
+//     pub fn paddr(&self) -> PhysAddr {
+//         let virt = i64::try_from(self as *const Self as u64).unwrap();
+//         let phys = u64::try_from(virt + BOOT_ARGS.load().vmm_phys_offset).unwrap();
+//         PhysAddr::new(phys)
+//     }
+// }
+
+// impl Index<usize> for EptTable {
+//     type Output = EptTableEntry;
+
+//     fn index(&self, index: usize) -> &Self::Output {
+//         &self.entries[index]
+//     }
+// }
+
+// impl IndexMut<usize> for EptTable {
+//     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+//         &mut self.entries[index]
+//     }
+// }
+
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct EptTableEntry(u64);
 
@@ -186,10 +224,6 @@ pub fn init_ept() -> EptPointer {
                     | EptTableFlags::MEMORY_TYPE_WB,
             );
         }
-
-        // if i_pdpt == 0 {
-        //     ept_pdt[0].set_flags(EptTableFlags::HUGE_PAGE | EptTableFlags::MEMORY_TYPE_WB);
-        // }
     }
 
     let mut eptp = EptPointer::new();

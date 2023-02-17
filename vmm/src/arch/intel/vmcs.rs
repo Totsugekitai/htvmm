@@ -126,20 +126,18 @@ impl VmcsRegion {
         let gdtr = unsafe {
             let limit = *(&uefi_gdtr as *const u8 as *const u16);
             let base = *((&uefi_gdtr as *const u8).offset(2) as *const u64);
-            let gdtr = DescriptorTablePointer {
+            DescriptorTablePointer {
                 limit,
                 base: VirtAddr::new(base),
-            };
-            gdtr
+            }
         };
         let idtr = unsafe {
             let limit = *(&uefi_idtr as *const u8 as *const u16);
             let base = *((&uefi_idtr as *const u8).offset(2) as *const u64);
-            let idtr = DescriptorTablePointer {
+            DescriptorTablePointer {
                 limit,
                 base: VirtAddr::new(base),
-            };
-            idtr
+            }
         };
         let gdtr_limit = gdtr.limit;
         let idtr_limit = idtr.limit;
@@ -169,7 +167,7 @@ impl VmcsRegion {
         self.write(VmcsField::GuestIa32SysenterCs, sysenter_cs);
 
         // 64 bit guest state fields
-        self.write(VmcsField::VmcsLinkPointer, 0xffffffff_ffffffffu64);
+        self.write(VmcsField::VmcsLinkPointer, 0xffff_ffff_ffff_ffff_u64);
         self.write(VmcsField::GuestIa32Debugctl, 0u64);
         self.write(VmcsField::GuestIa32Efer, efer);
 
@@ -208,10 +206,6 @@ impl VmcsRegion {
         self.write(VmcsField::GuestRflags, rflags);
         self.write(VmcsField::GuestSysenterEsp, sysenter_esp);
         self.write(VmcsField::GuestSysenterEip, sysenter_eip);
-        // unsafe {
-        //     use core::arch::asm;
-        //     asm!("mov r15, {}; hlt", in(reg) idtr_limit as u64, options(readonly, nostack, preserves_flags));
-        // };
     }
 
     fn setup_host_state_area(&mut self, vmexit_host_rip: u64) {
@@ -280,10 +274,6 @@ impl VmcsRegion {
         self.write(VmcsField::HostRip, vmexit_host_rip);
         self.write(VmcsField::HostIa32Efer, efer);
         self.write(VmcsField::HostIa32Pat, pat);
-        // unsafe {
-        //     use core::arch::asm;
-        //     asm!("mov r15, {}; hlt", in(reg) host_rip, options(readonly, nostack, preserves_flags));
-        // };
     }
 
     fn setup_vm_control_fields(&mut self, eptp: EptPointer) {
@@ -291,23 +281,23 @@ impl VmcsRegion {
         let pin_based_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_PINBASED_CTLS).read() };
         let pin_based_ctls_or = (pin_based_ctls & 0xffff_ffff) as u32;
         let pin_based_ctls_and = ((pin_based_ctls >> 32) & 0xffff_ffff) as u32;
-        let pin_based_ctls = ((0 | pin_based_ctls_or) & pin_based_ctls_and) as u64;
+        let pin_based_ctls = (pin_based_ctls_or & pin_based_ctls_and) as u64;
         let proc_based_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_PROCBASED_CTLS).read() };
         let proc_based_ctls_or = (proc_based_ctls & 0xffff_ffff) as u32;
         let proc_based_ctls_and = ((proc_based_ctls >> 32) & 0xffff_ffff) as u32;
-        let proc_based_ctls = ((0 | proc_based_ctls_or) & proc_based_ctls_and) as u64;
+        let proc_based_ctls = (proc_based_ctls_or & proc_based_ctls_and) as u64;
         let proc_based_ctls2 = unsafe { Msr::new(constants::MSR_IA32_VMX_PROCBASED_CTLS2).read() };
         let proc_based_ctls2_or = (proc_based_ctls2 & 0xffff_ffff) as u32;
         let proc_based_ctls2_and = ((proc_based_ctls2 >> 32) & 0xffff_ffff) as u32;
-        let proc_based_ctls2 = ((0 | proc_based_ctls2_or) & proc_based_ctls2_and) as u64;
+        let proc_based_ctls2 = (proc_based_ctls2_or & proc_based_ctls2_and) as u64;
         let exit_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_EXIT_CTLS).read() };
         let exit_ctls_or = (exit_ctls & 0xffff_ffff) as u32;
         let exit_ctls_and = ((exit_ctls >> 32) & 0xffff_ffff) as u32;
-        let exit_ctls = ((0 | exit_ctls_or) & exit_ctls_and) as u64;
+        let exit_ctls = (exit_ctls_or & exit_ctls_and) as u64;
         let entry_ctls = unsafe { Msr::new(constants::MSR_IA32_VMX_ENTRY_CTLS).read() };
         let entry_ctls_or = (entry_ctls & 0xffff_ffff) as u32;
         let entry_ctls_and = ((entry_ctls >> 32) & 0xffff_ffff) as u32;
-        let entry_ctls = ((0 | entry_ctls_or) & entry_ctls_and) as u64;
+        let entry_ctls = (entry_ctls_or & entry_ctls_and) as u64;
         let msr_bitmap_phys = unsafe {
             let layout = Layout::from_size_align(4096, 4096).unwrap();
             let bitmap_region = alloc(layout);
@@ -328,9 +318,9 @@ impl VmcsRegion {
         );
         self.write(
             VmcsField::ProcBasedVmExecControls2,
-            proc_based_ctls2 | VMCS_PROC_BASED_VMEXEC_CTLS2_ENABLE_EPT,
+            proc_based_ctls2, //| VMCS_PROC_BASED_VMEXEC_CTLS2_ENABLE_EPT,
         );
-        self.write(VmcsField::ExceptionBitmap, 0);
+        self.write(VmcsField::ExceptionBitmap, 0xffff_ffff);
         self.write(VmcsField::PageFaultErrorCodeMask, 0);
         self.write(VmcsField::PageFaultErrorCodeMatch, 0);
         self.write(VmcsField::Cr3TargetCount, 0);

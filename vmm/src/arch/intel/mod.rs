@@ -39,7 +39,7 @@ impl IntelCpu {
     }
 
     fn is_vmx_supported() -> bool {
-        let cpuid = Self::cpuid(1, 0);
+        let cpuid = unsafe { core::arch::x86_64::__cpuid_count(1, 0) };
         let vmx = cpuid.ecx & (1 << 5);
         0 < vmx
     }
@@ -99,9 +99,9 @@ impl Cpu for IntelCpu {
 
 #[no_mangle]
 unsafe fn resume_vm(gpr: *mut VmExitGeneralPurposeRegister) {
-    let cpu = BSP.as_ptr().as_ref().unwrap();
-    let exit_reason = cpu.vmcs_region.read(VmcsField::VmExitReason);
-    let exit_qual = cpu.vmcs_region.read(VmcsField::ExitQualification);
+    let bsp = BSP.as_ptr().as_ref().unwrap();
+    let exit_reason = bsp.vmcs_region.read(VmcsField::VmExitReason);
+    let exit_qual = bsp.vmcs_region.read(VmcsField::ExitQualification);
 
     serial_println!("=== VMExit!!!!! ===");
 

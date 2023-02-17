@@ -3,6 +3,8 @@
 
 .global     entry, entry_ret
 entry:                                  # pub extern "sysv64" fn entry(boot_args: *const BootArgs);
+    push    %rbp
+    mov     %rsp, %rbp
     mov     16(%rdi), %rax
     mov     %rax, vmm_physoff(%rip)
     call    set_vmm_tss64
@@ -32,6 +34,8 @@ entry:                                  # pub extern "sysv64" fn entry(boot_args
     .byte   0x48                        # REX.W prefix
     ljmpl   *(%rax)
 entry_ret:
+    mov     uefi_rsp(%rip), %rsp
+    pop     %rbp
     ret
 
 .align      16

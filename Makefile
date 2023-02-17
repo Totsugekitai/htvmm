@@ -6,28 +6,43 @@ MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 LD = ld.lld
 LDFLAGS = --no-nmagic --gc-sections --Map=vmm/htvmm.map -nostdlib --script=vmm/src/htvmm.lds
 
+OVMFBASE=../edk2/Build/OvmfX64/DEBUG_GCC5/FV/
+#OVMFBASE=tools/ovmf/
+OVMFCODE=$(OVMFBASE)/OVMF_CODE.fd
+OVMFVARS=$(OVMFBASE)/OVMF_VARS.fd
+#OVMFCODE=$(OVMFBASE)/OVMF_CODE_4M.fd
+#OVMFVARS=$(OVMFBASE)/OVMF_VARS_4M.fd
+
 export RELEASE ?=
 build_mode := $(if $(RELEASE),release,debug)
+
+features :=
+
+export GPD ?=
+ifeq ($(GPD),1)
+features +=gpd
+endif
 
 export RUSTFLAGS = -Z emit-stack-sizes
 CARGOFLAGS += $(if $(RELEASE),--release,)
 
 export QEMU ?= qemu-system-x86_64
 QEMUFLAGS := -s -m 8G \
--drive if=pflash,format=raw,readonly,file=tools/ovmf/OVMF_CODE.fd \
--drive if=pflash,format=raw,file=tools/ovmf/OVMF_VARS.fd \
+-drive if=pflash,format=raw,readonly,file=$(OVMFCODE) \
+-drive if=pflash,format=raw,file=$(OVMFVARS) \
 -drive if=ide,file=fat:rw:image,index=0,media=disk \
 -drive format=raw,index=1,file=disk.iso \
 -enable-kvm -cpu host,+vmx \
--serial stdio
-#-monitor stdio
+-debugcon file:ovmf.debug.log -global isa-debugcon.iobase=0x402 \
+-serial stdio \
+-monitor telnet::4444,server,nowait
 
 .PHONY: default
 default: build
 
 VMM_OBJ = vmm/target/htvmm/$(build_mode)/libhtvmm.a
 $(VMM_OBJ): .FORCE
-> cd vmm; cargo build $(CARGOFLAGS)
+> cd vmm; cargo build $(CARGOFLAGS) --features "$(features)"
 
 .PHONY: build-vmm
 build-vmm: $(VMM_OBJ)
@@ -88,5 +103,10 @@ trace:
 > echo 1 | sudo tee /sys/kernel/tracing/events/kvm/kvm_nested_vmexit/enable
 > echo 1 | sudo tee /sys/kernel/debug/tracing/tracing_on
 > sudo watch tail /sys/kernel/debug/tracing/trace
+
+.PHONY: clippy
+clippy:
+> (cd vmm; cargo clippy)
+> (cd loader; cargo clippy)
 
 .FORCE:

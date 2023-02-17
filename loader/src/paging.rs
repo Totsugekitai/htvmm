@@ -1,4 +1,5 @@
 use crate::MAX_ADDRESS;
+use common::VMM_AREA_SIZE;
 use uefi::{
     prelude::BootServices,
     table::boot::{AllocateType, MemoryType},
@@ -11,10 +12,14 @@ use x86_64::{
 
 pub fn create_page_table(vmm_entry_phys: PhysAddr, bs: &BootServices) -> (PhysAddr, Cr3Flags) {
     let (uefi_pml4, cr3_flags) = Cr3::read();
-    let uefi_pml4_table = uefi_pml4.start_address().as_u64() as *const PageTable;
+    let uefi_pml4_table = unsafe {
+        (uefi_pml4.start_address().as_u64() as *const PageTable)
+            .as_ref()
+            .unwrap()
+    };
     unsafe {
-        let vmm_pml4_table = construct_table(&*uefi_pml4_table, bs);
-        modify_table(vmm_pml4_table, vmm_entry_phys, bs);
+        let vmm_pml4_table = construct_table(uefi_pml4_table, bs);
+        modify_table(vmm_pml4_table, vmm_entry_phys, uefi_pml4_table, bs);
 
         (PhysAddr::new(vmm_pml4_table as *const _ as u64), cr3_flags)
     }
@@ -82,6 +87,7 @@ unsafe fn construct_table_inner(
 unsafe fn modify_table(
     vmm_pml4_table: &mut PageTable,
     vmm_entry_phys: PhysAddr,
+    uefi_pml4_table: &PageTable,
     bs: &BootServices,
 ) {
     // create 0x1_0000_0000 ~ linear address page table
@@ -95,23 +101,43 @@ unsafe fn modify_table(
     let pd_table = core::mem::transmute::<u64, &mut PageTable>(pd_table);
     pd_table.zero();
 
-    let vmm_entry_phys = vmm_entry_phys.as_u64() & 0xffff_ffff_ffe0_0000;
-    // for i in 0..(VMM_AREA_SIZE as usize / 0x200000) {
+    let uefi_pdp_table =
+        core::mem::transmute::<u64, &mut PageTable>(uefi_pml4_table[0].addr().as_u64());
+    let uefi_pd_table4 = core::mem::transmute::<u64, &PageTable>(uefi_pdp_table[4].addr().as_u64());
+
+    let vmm_entry_phys = vmm_entry_phys.as_u64() & !0x1f_ffff;
+
     for i in 0..512 {
         let pde = &mut pd_table[i];
-        pde.set_addr(
-            PhysAddr::new(vmm_entry_phys + 0x20_0000 * i as u64),
-            PageTableFlags::PRESENT
-                | PageTableFlags::WRITABLE
-                | PageTableFlags::HUGE_PAGE
-                | PageTableFlags::GLOBAL,
-        );
+        if i < (VMM_AREA_SIZE as usize / 0x20_0000) {
+            let addr = vmm_entry_phys + 0x20_0000 * i as u64;
+            pde.set_addr(
+                PhysAddr::new(addr),
+                PageTableFlags::PRESENT
+                    | PageTableFlags::WRITABLE
+                    | PageTableFlags::HUGE_PAGE
+                    | PageTableFlags::GLOBAL,
+            );
+        } else {
+            let pd4e = uefi_pd_table4[i].clone();
+            *pde = pd4e;
+        }
     }
 
     let vmm_pdp_table =
-        core::mem::transmute::<u64, &mut PageTable>((&vmm_pml4_table[0]).addr().as_u64());
+        core::mem::transmute::<u64, &mut PageTable>(vmm_pml4_table[0].addr().as_u64());
     let vmm_pdpte4 = &mut vmm_pdp_table[4];
-    let vmm_pdpte4_flags = vmm_pdpte4.flags();
+    let mut vmm_pdpte4_flags = vmm_pdpte4.flags();
+
+    if vmm_pdpte4_flags.contains(PageTableFlags::HUGE_PAGE | PageTableFlags::PRESENT) {
+        vmm_pdpte4_flags.remove(PageTableFlags::HUGE_PAGE);
+        for i in (VMM_AREA_SIZE as usize / 0x20_0000)..512 {
+            pd_table[i].set_addr(
+                PhysAddr::new(0x1_0000_0000 + 0x20_0000 * i as u64),
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE,
+            );
+        }
+    }
     vmm_pdpte4.set_addr(
         PhysAddr::new(pd_table as *mut PageTable as u64),
         vmm_pdpte4_flags,

@@ -19,6 +19,9 @@ iced-x86 = { version = "1.18.0", default-features = false, features = [
 
 common = { path = "../common" }
 
+[features]
+gpd = []
+
 [lib]
 crate-type = ["staticlib"]
 

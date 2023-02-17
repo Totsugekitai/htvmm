@@ -10,7 +10,6 @@ extern crate alloc;
 use crate::paging::create_page_table;
 use common::{BootArgs, VMM_AREA_HEAD_VADDR, VMM_AREA_SIZE};
 use core::{arch::asm, fmt::Write};
-use crossbeam::atomic::AtomicCell;
 use goblin::elf;
 use uefi::{
     data_types::Align,
@@ -23,17 +22,12 @@ use uefi::{
     CStr16,
 };
 use uefi_services::{self, println};
-use x86_64::{registers::control::Cr3Flags, structures::paging::PhysFrame, PhysAddr};
+use x86_64::{structures::paging::PhysFrame, PhysAddr};
 
-const VMM_FILE_NAME: &'static str = "htvmm.elf";
+const VMM_FILE_NAME: &str = "htvmm.elf";
 const PAGE_SIZE: usize = 0x1000;
 pub const MAX_ADDRESS: usize = 0x4000_0000;
 pub const VMM_ENTRY_VADDR: usize = 0x1_0000_1000;
-
-static UEFI_CR3: AtomicCell<(PhysFrame, Cr3Flags)> = AtomicCell::new((
-    unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(0)) },
-    Cr3Flags::empty(),
-));
 
 #[entry]
 fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
@@ -90,7 +84,9 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         halt("[ERROR] allocate_pages");
     }
     let alloc_paddr = alloc_paddr.unwrap();
-    // modify_uefi_page_table(PhysAddr::new(alloc_paddr), vmm_page_count);
+    println!(
+        "Allocate region for VMM: phys addrress = 0x{alloc_paddr:x}, count = 0x{vmm_page_count:x}"
+    );
 
     let vmm_regular_file = vmm_file_handle.into_regular_file();
     if vmm_regular_file.is_none() {
@@ -104,7 +100,7 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         halt("[ERROR] read");
     }
 
-    let vmm_elf = elf::Elf::parse(&region);
+    let vmm_elf = elf::Elf::parse(region);
     if vmm_elf.is_err() {
         halt("[ERROR] parse ELF");
     }
@@ -112,7 +108,6 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
     let vmm_entry_offset = vmm_elf.program_headers[0].p_offset; // FIXME!!!
 
     let (uefi_cr3, uefi_cr3_flags) = x86_64::registers::control::Cr3::read();
-    UEFI_CR3.store((uefi_cr3, uefi_cr3_flags));
     let uefi_cr3_u64 = uefi_cr3.start_address().as_u64();
     let boot_args = BootArgs {
         uefi_cr3: PhysAddr::new(uefi_cr3_u64),
@@ -122,6 +117,11 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
         uefi_write_char,
         uefi_output,
     };
+
+    println!(
+        "UEFI CR3: 0x{:x}",
+        uefi_cr3.start_address().as_u64() | uefi_cr3_flags.bits()
+    );
 
     let entry_point = alloc_paddr + vmm_entry_offset;
 
@@ -136,10 +136,8 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
             cr3_flags,
         );
 
-        // let vmm_entry: extern "sysv64" fn(*const BootArgs) = core::mem::transmute(VMM_ENTRY_VADDR);
-        // vmm_entry(&boot_args as *const BootArgs);
-
         asm!(
+            "push %rbp",
             "push %rax",
             "push %rbx",
             "push %rcx",
@@ -154,8 +152,6 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
             "push %r13",
             "push %r14",
             "push %r15",
-            "mov {boot_args}, %rdi",
-            "mov {vmm_entry}, %rax",
             "call *%rax",
             "pop %r15",
             "pop %r14",
@@ -171,19 +167,26 @@ fn efi_main(image_handle: Handle, mut systab: SystemTable<Boot>) -> Status {
             "pop %rcx",
             "pop %rbx",
             "pop %rax",
-            boot_args = in(reg) &boot_args as *const BootArgs,
-            vmm_entry = in(reg) VMM_ENTRY_VADDR,
+            "pop %rbp",
+            in("rdi") &boot_args as *const BootArgs,
+            in("rax") VMM_ENTRY_VADDR,
             options(att_syntax)
         );
 
-        let (uefi_cr3, uefi_cr3_flags) = UEFI_CR3.load();
         x86_64::registers::control::Cr3::write(uefi_cr3, uefi_cr3_flags);
+        loop {
+            asm!("hlt");
+        }
     }
     x86_64::instructions::interrupts::enable();
+    // unsafe {
+    //     loop {
+    //         asm!("hlt");
+    //     }
+    // }
 
-    // halt("VMM boot OK!");
+    println!("VMM boot OK!");
 
-    // println!("VMM boot OK!");
     Status::SUCCESS
 }
 

@@ -1,4 +1,4 @@
-use crate::{ioapic, uefi_println};
+use crate::ioapic;
 use x86_64::instructions::{
     interrupts::without_interrupts,
     port::{PortReadOnly, PortWriteOnly},
@@ -12,7 +12,11 @@ pub const COM3: u16 = 0x3e8;
 #[allow(unused)]
 pub const COM4: u16 = 0x2e8;
 
-const IRQ: u32 = if COM == COM1 { IRQ4 } else { IRQ3 };
+const IRQ: u32 = if COM == COM1 || COM == COM3 {
+    IRQ4
+} else {
+    IRQ3
+};
 const IRQ4: u32 = 4;
 const IRQ3: u32 = 3;
 
@@ -30,10 +34,9 @@ pub unsafe fn init(com: u16) {
         PortWriteOnly::<u8>::new(com + 4).write(0x0b); // IRQ enable
         PortWriteOnly::<u8>::new(com + 1).write(0x01); // interrupt enable
 
-        // if PortReadOnly::<u16>::new(com + 5).read() == 0xff {
-        //     uefi_println!("failed to init serial");
-        //     panic!();
-        // }
+        if PortReadOnly::<u16>::new(com + 5).read() == 0xff {
+            panic!();
+        }
 
         PortReadOnly::<u16>::new(com + 2).read();
         PortReadOnly::<u16>::new(com).read();
@@ -43,10 +46,9 @@ pub unsafe fn init(com: u16) {
 }
 
 pub unsafe fn write(com: u16, c: u8) {
-    // if !cfg!(feature = "qemu") {
-    //     while PortReadOnly::<u16>::new(com + 5).read() & 0x20 != 0x20 {
-    //         x86_64::instructions::nop();
-    //     }
-    // }
+    while (PortReadOnly::<u16>::new(com + 5).read() & 0b10_0000) >> 5 != 1 {
+        x86_64::instructions::nop();
+    }
+
     PortWriteOnly::<u8>::new(com).write(c);
 }

@@ -1,35 +1,13 @@
 use core::arch::asm;
 use x86_64::{
-    instructions::tables::sgdt, registers::segmentation::Segment, structures::gdt::SegmentSelector,
+    instructions::tables::sgdt,
+    registers::segmentation::Segment,
+    structures::gdt::SegmentSelector,
+    structures::paging::{PageTable, PageTableFlags},
+    PhysAddr,
 };
 
-#[derive(Debug, Clone)]
-pub struct Cpuid {
-    pub eax: u32,
-    pub ebx: u32,
-    pub ecx: u32,
-    pub edx: u32,
-}
-
-impl Cpuid {
-    pub fn new() -> Self {
-        Self {
-            eax: 0,
-            ebx: 0,
-            ecx: 0,
-            edx: 0,
-        }
-    }
-}
-
 pub trait Cpu {
-    fn cpuid(eax: u32, ecx: u32) -> Cpuid {
-        let mut cpuid = Cpuid::new();
-        unsafe {
-            asm!("cpuid","mov rdi, rbx",  inlateout("eax") eax => cpuid.eax, out("rdi") cpuid.ebx, inlateout("ecx") ecx => cpuid.ecx, out("edx") cpuid.edx);
-        }
-        cpuid
-    }
     fn is_virtualization_supported(&self) -> bool;
     fn enable_virtualization(&mut self) -> Result<(), CpuError>;
     fn disable_virtualization(&mut self) -> Result<(), CpuError>;
@@ -104,4 +82,69 @@ impl SegmentDescriptor {
     //     }
     //     limit
     // }
+}
+
+pub fn guest_virt_to_guest_phys(guest_virt: u64, guest_cr3: u64) -> PhysAddr {
+    let pml4_index = ((guest_virt >> 39) & 0b1_1111_1111) as usize;
+    let pdp_index = ((guest_virt >> 30) & 0b1_1111_1111) as usize;
+    let pd_index = ((guest_virt >> 21) & 0b1_1111_1111) as usize;
+    let pt_index = ((guest_virt >> 12) & 0b1_1111_1111) as usize;
+    // serial_println!("pml4: {pml4_index}, pdp: {pdp_index}, pd: {pd_index}, pt: {pt_index}");
+
+    let guest_pml4_phys = PhysAddr::new(guest_cr3 & !0b1111_1111_1111);
+    let guest_pml4 = unsafe {
+        (guest_pml4_phys.as_u64() as *mut PageTable)
+            .as_mut()
+            .unwrap()
+    };
+
+    // use crate::serial_println;
+
+    let guest_pml4_entry = &guest_pml4[pml4_index];
+    // serial_println!("{:?}", guest_pml4_entry);
+    if !guest_pml4_entry.flags().contains(PageTableFlags::PRESENT) {
+        return PhysAddr::new(0);
+    }
+
+    let guest_pdp = unsafe {
+        (guest_pml4_entry.addr().as_u64() as *mut PageTable)
+            .as_mut()
+            .unwrap()
+    };
+
+    let guest_pdp_entry = &guest_pdp[pdp_index];
+    // serial_println!("{:?}", guest_pdp_entry);
+    if !guest_pdp_entry.flags().contains(PageTableFlags::PRESENT) {
+        return PhysAddr::new(0);
+    }
+    if guest_pdp_entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+        let pdp_offset = guest_virt & 0b1_1111_1111_1111_1111_1111_1111_1111;
+        return guest_pdp_entry.addr() + pdp_offset;
+    }
+
+    let guest_pd = unsafe {
+        (guest_pdp_entry.addr().as_u64() as *mut PageTable)
+            .as_mut()
+            .unwrap()
+    };
+
+    let guest_pd_entry = &guest_pd[pd_index];
+    // serial_println!("{:?}", guest_pd_entry);
+    if !guest_pd_entry.flags().contains(PageTableFlags::PRESENT) {
+        return PhysAddr::new(0);
+    }
+    if guest_pd_entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+        let pd_offset = guest_virt & 0b1_1111_1111_1111_1111_1111;
+        return guest_pd_entry.addr() + pd_offset;
+    }
+
+    let guest_pt = unsafe {
+        (guest_pd_entry.addr().as_u64() as *mut PageTable)
+            .as_mut()
+            .unwrap()
+    };
+
+    let guest_pt_entry = &guest_pt[pt_index];
+    let pt_offset = guest_virt & 0b1111_1111_1111;
+    guest_pt_entry.addr() + pt_offset
 }
